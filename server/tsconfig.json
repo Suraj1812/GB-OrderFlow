@@ -1,0 +1,14 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2021"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "outDir": "../dist-server",
+    "rootDir": "..",
+    "noEmit": false,
+    "types": ["node"]
+  },
+  "include": ["../server/**/*.ts", "../shared/**/*.ts"]
+}
+
