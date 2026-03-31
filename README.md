@@ -46,9 +46,12 @@ cp .env.example .env
 3. Start PostgreSQL locally, then run migrations and seed data
 
 ```bash
+docker compose up -d postgres
 npm run db:migrate
 npm run db:seed
 ```
+
+If port `5432` is busy on your machine, set `POSTGRES_PORT` and keep `DATABASE_URL` aligned with that port.
 
 4. Start the app
 

@@ -4,4 +4,6 @@ dist-server
 .DS_Store
 server/storage/db.json
 npm-debug.log*
-
+.env
+.env.local
+.env.*.local

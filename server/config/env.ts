@@ -61,6 +61,14 @@ const envSchema = z.object({
 
 const parsed = envSchema.parse(process.env);
 
+process.env.NODE_ENV ??= parsed.NODE_ENV;
+process.env.HOST ??= parsed.HOST;
+process.env.PORT ??= String(parsed.PORT);
+process.env.DATABASE_URL ??= parsed.DATABASE_URL;
+process.env.CORS_ORIGINS ??= parsed.CORS_ORIGINS;
+process.env.FRONTEND_ORIGIN ??= parsed.FRONTEND_ORIGIN;
+process.env.API_ORIGIN ??= parsed.API_ORIGIN;
+
 export const env = {
   ...parsed,
   isProduction: parsed.NODE_ENV === "production",
