@@ -23,6 +23,8 @@ const envSchema = z.object({
   PASSWORD_RESET_TTL_MINUTES: z.coerce.number().int().positive().default(15),
   DOWNLOAD_URL_TTL_MINUTES: z.coerce.number().int().positive().default(30),
   BCRYPT_SALT_ROUNDS: z.coerce.number().int().min(10).max(15).default(12),
+  MAX_LOGIN_FAILURES: z.coerce.number().int().min(3).max(20).default(5),
+  ACCOUNT_LOCK_MINUTES: z.coerce.number().int().positive().max(1440).default(15),
   REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().default(15_000),
   GRACEFUL_SHUTDOWN_MS: z.coerce.number().int().positive().default(10_000),
   BODY_LIMIT_KB: z.coerce.number().int().positive().max(1024).default(200),
@@ -48,6 +50,10 @@ const envSchema = z.object({
   FRONTEND_ORIGIN: z.string().default("http://127.0.0.1:5173"),
   API_ORIGIN: z.string().default("http://127.0.0.1:4000"),
   COOKIE_SAME_SITE: z.enum(["lax", "strict", "none"]).default("lax"),
+  DEBUG_MODE: z
+    .string()
+    .default("false")
+    .transform((value) => value === "true"),
   SENTRY_DSN: z.string().optional(),
   EMAIL_FROM: z.string().email().optional(),
 });

@@ -54,7 +54,7 @@ const navigationItems = [
 function SidebarContent() {
   const location = useLocation();
   const navigate = useNavigate();
-  const { logout, session } = useAuth();
+  const { logout, logoutAllSessions, session } = useAuth();
 
   return (
     <Stack height="100%">
@@ -103,6 +103,15 @@ function SidebarContent() {
         })}
       </List>
       <Box p={2}>
+        <Button
+          fullWidth
+          variant="text"
+          color="inherit"
+          sx={{ mb: 1 }}
+          onClick={logoutAllSessions}
+        >
+          Logout all sessions
+        </Button>
         <Button
           fullWidth
           variant="outlined"

@@ -141,6 +141,12 @@ export function createRouter() {
     asyncHandler((request, response) => authController.logout(request, response)),
   );
   router.post(
+    "/auth/logout-all",
+    authenticate,
+    requireCsrf,
+    asyncHandler((request, response) => authController.logoutAllSessions(request, response)),
+  );
+  router.post(
     "/auth/forgot-password",
     authRateLimiter,
     validateRequest({ body: forgotPasswordSchema }),

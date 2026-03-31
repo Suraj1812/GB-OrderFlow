@@ -61,6 +61,10 @@ export function createOtpCode() {
   return String(crypto.randomInt(0, 1_000_000)).padStart(6, "0");
 }
 
+export function createPasswordResetTokenSecret() {
+  return crypto.randomBytes(32).toString("base64url");
+}
+
 export function createCsrfToken() {
   return crypto.randomBytes(24).toString("base64url");
 }

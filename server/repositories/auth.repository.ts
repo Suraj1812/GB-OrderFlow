@@ -164,6 +164,20 @@ export class AuthRepository {
       where: { id: userId },
       data: {
         lastLoginAt: new Date(),
+        failedLoginAttempts: 0,
+        lockedUntil: null,
+      },
+    });
+  }
+
+  public recordFailedLoginAttempt(userId: string, options?: { lockedUntil?: Date | null }) {
+    return this.db.user.update({
+      where: { id: userId },
+      data: {
+        failedLoginAttempts: {
+          increment: 1,
+        },
+        ...(options && "lockedUntil" in options ? { lockedUntil: options.lockedUntil } : {}),
       },
     });
   }
@@ -171,6 +185,7 @@ export class AuthRepository {
   public createPasswordResetToken(input: {
     userId: string;
     otpHash: string;
+    resetTokenHash?: string;
     expiresAt: Date;
   }) {
     return this.db.passwordResetToken.create({

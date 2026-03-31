@@ -72,6 +72,8 @@ model User {
   passwordHash        String
   role                UserRole
   active              Boolean              @default(true)
+  failedLoginAttempts Int                  @default(0)
+  lockedUntil         DateTime?
   lastLoginAt         DateTime?
   createdAt           DateTime             @default(now())
   updatedAt           DateTime             @updatedAt
@@ -81,6 +83,7 @@ model User {
   auditLogs           AuditLog[]
 
   @@index([dealerId])
+  @@index([lockedUntil])
   @@index([role, active])
 }
 
@@ -104,6 +107,7 @@ model PasswordResetToken {
   id        String   @id @default(cuid())
   userId    String
   otpHash   String
+  resetTokenHash String?
   expiresAt DateTime
   consumedAt DateTime?
   createdAt DateTime @default(now())

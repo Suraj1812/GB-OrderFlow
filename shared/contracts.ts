@@ -212,8 +212,12 @@ export type ForgotPasswordInput = z.infer<typeof forgotPasswordSchema>;
 
 export const resetPasswordSchema = z.object({
   identifier: z.string().trim().min(3),
-  otp: z.string().trim().min(6).max(6),
+  otp: z.string().trim().min(6).max(6).optional(),
+  token: z.string().trim().min(32).max(160).optional(),
   newPassword: z.string().trim().min(10).max(120),
+}).refine((value) => Boolean(value.otp || value.token), {
+  message: "Enter the OTP or secure reset token.",
+  path: ["otp"],
 });
 export type ResetPasswordInput = z.infer<typeof resetPasswordSchema>;
 
@@ -311,5 +315,6 @@ export type IdempotencyKey = z.infer<typeof idempotencyKeySchema>;
 export const messageResponseSchema = z.object({
   message: z.string(),
   otpPreview: z.string().optional(),
+  resetTokenPreview: z.string().optional(),
 });
 export type MessageResponse = z.infer<typeof messageResponseSchema>;

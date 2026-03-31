@@ -35,7 +35,7 @@ const navigationItems = [
 export function DealerShell() {
   const location = useLocation();
   const navigate = useNavigate();
-  const { logout, session } = useAuth();
+  const { logout, logoutAllSessions, session } = useAuth();
 
   return (
     <Box className="app-shell">
@@ -79,6 +79,13 @@ export function DealerShell() {
 
             <Stack direction="row" alignItems="center" spacing={1.5}>
               <Chip label={session?.dealerCode ?? "Dealer"} color="secondary" />
+              <Button
+                color="inherit"
+                sx={{ display: { xs: "none", sm: "inline-flex" } }}
+                onClick={logoutAllSessions}
+              >
+                Logout all
+              </Button>
               <Button
                 color="inherit"
                 startIcon={<LogoutRoundedIcon />}

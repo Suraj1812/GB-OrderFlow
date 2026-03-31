@@ -19,8 +19,9 @@ Enterprise-grade dealer ordering and Head Office approval workflow for Goel Brot
 
 - Refresh token + access token authentication with HTTP-only cookies
 - Role-based access control for Dealer and Head Office flows
-- Login brute-force protection, rate limiting, audit logs, and bcrypt password hashing
-- Forgot-password OTP flow with server-side invalidation
+- Session tracking in PostgreSQL, logout-all-sessions support, and refresh-token rotation
+- Login brute-force protection, temporary account lockout, audit logs, and bcrypt password hashing
+- Password reset via OTP or secure reset token with server-side invalidation
 - Modular backend with controllers, services, repositories, centralized errors, and request validation
 - PostgreSQL schema for dealers, users, sessions, SKUs, orders, order items, exports, and audit logs
 - Deterministic ERP-safe CSV generation with export history and signed download URLs
@@ -99,6 +100,13 @@ Dealers:
 - `npm run stress:orders` - bulk dealer order stress runner against a live API
 - `npm run backup:db` - PostgreSQL backup wrapper using `pg_dump`
 
+## Auth notes
+
+- `POST /api/v1/auth/logout-all` revokes every active session for the signed-in user.
+- `POST /api/v1/auth/forgot-password` prepares both an OTP and a secure reset token.
+- `POST /api/v1/auth/reset-password` accepts either the OTP or the secure reset token.
+- Repeated failed login attempts trigger a temporary account lock based on `.env` settings.
+
 ## Deployment
 
 ### Frontend on Vercel
@@ -124,5 +132,6 @@ Dealers:
 
 - The CSV format is deterministic, UTF-8 BOM encoded, CRLF separated, and validated before export.
 - Export generation is idempotent per order and stored in `ExportHistory`.
+- Export downloads are re-verified against their stored SHA-256 checksum before delivery.
 - Every API response includes an `x-request-id` header for tracing across logs and failures.
 - Dealer-facing endpoints intentionally never return internal rate or discount values.

@@ -26,7 +26,8 @@ interface AuthContextValue {
   loginDealer: (input: DealerLoginInput) => Promise<void>;
   loginHeadOffice: (input: HeadOfficeLoginInput) => Promise<void>;
   logout: () => Promise<void>;
-  requestPasswordReset: (input: ForgotPasswordInput) => Promise<{ message: string; otpPreview?: string }>;
+  logoutAllSessions: () => Promise<void>;
+  requestPasswordReset: (input: ForgotPasswordInput) => Promise<{ message: string; otpPreview?: string; resetTokenPreview?: string }>;
   resetPassword: (input: ResetPasswordInput) => Promise<void>;
   getDefaultRoute: (role?: UserRole | null) => string;
 }
@@ -123,8 +124,27 @@ export function AuthProvider({ children }: PropsWithChildren) {
     }
   }
 
+  async function logoutAllSessions() {
+    try {
+      await apiClient.post(
+        "/auth/logout-all",
+        undefined,
+        {
+          skipAuthRefresh: true,
+        },
+      );
+    } catch (error) {
+      if (getApiErrorMessage(error) !== "Authentication required.") {
+        throw error;
+      }
+    } finally {
+      setSession(null);
+      setCsrfToken(null);
+    }
+  }
+
   async function requestPasswordReset(input: ForgotPasswordInput) {
-    const response = await apiClient.post<{ message: string; otpPreview?: string }>(
+    const response = await apiClient.post<{ message: string; otpPreview?: string; resetTokenPreview?: string }>(
       "/auth/forgot-password",
       input,
       {
@@ -151,6 +171,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
       loginDealer,
       loginHeadOffice,
       logout,
+      logoutAllSessions,
       requestPasswordReset,
       resetPassword,
       getDefaultRoute,

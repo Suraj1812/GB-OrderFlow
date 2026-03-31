@@ -14,6 +14,7 @@ import {
   createAccessToken,
   createCsrfToken,
   createOtpCode,
+  createPasswordResetTokenSecret,
   createRefreshToken,
   hashSecret,
 } from "../core/tokens.js";
@@ -47,6 +48,74 @@ function parseRefreshCookieValue(value?: string) {
 
 export class AuthService {
   constructor(private readonly repository: AuthRepository) {}
+
+  private async ensureAccountIsAvailable(
+    userRecord: Awaited<ReturnType<AuthRepository["findUserById"]>>,
+    meta: RequestMeta,
+    identity: { dealerCode?: string; email?: string | null },
+  ) {
+    if (!userRecord || !userRecord.active) {
+      throw new AppError(401, "UNAUTHORIZED", "Account is not active.");
+    }
+
+    if (userRecord.lockedUntil && userRecord.lockedUntil.getTime() > Date.now()) {
+      await this.repository.createAuditLog({
+        userId: userRecord.id,
+        requestId: meta.requestId,
+        action: AuditAction.LOGIN_FAILED,
+        email: identity.email ?? userRecord.email,
+        dealerCode: identity.dealerCode ?? userRecord.dealer?.code,
+        message: "Login blocked because the account is temporarily locked.",
+        ipAddress: meta.ipAddress,
+        userAgent: meta.userAgent,
+      });
+      throw new AppError(
+        423,
+        "ACCOUNT_LOCKED",
+        "Too many failed sign-in attempts. Please try again later.",
+      );
+    }
+  }
+
+  private async recordFailedLogin(
+    userRecord: Awaited<ReturnType<AuthRepository["findUserById"]>>,
+    meta: RequestMeta,
+    details: {
+      message: string;
+      dealerCode?: string;
+      email?: string | null;
+    },
+  ) {
+    if (!userRecord) {
+      return;
+    }
+
+    const nextFailures = (userRecord.failedLoginAttempts ?? 0) + 1;
+    const shouldLock = nextFailures >= env.MAX_LOGIN_FAILURES;
+    const lockedUntil = shouldLock
+      ? new Date(Date.now() + env.ACCOUNT_LOCK_MINUTES * 60 * 1000)
+      : undefined;
+
+    await this.repository.recordFailedLoginAttempt(userRecord.id, {
+      lockedUntil,
+    });
+    await this.repository.createAuditLog({
+      userId: userRecord.id,
+      requestId: meta.requestId,
+      action: AuditAction.LOGIN_FAILED,
+      dealerCode: details.dealerCode ?? userRecord.dealer?.code,
+      email: details.email ?? userRecord.email,
+      message: shouldLock
+        ? `${details.message} Account locked after repeated failures.`
+        : details.message,
+      ipAddress: meta.ipAddress,
+      userAgent: meta.userAgent,
+      metadata: {
+        failedLoginAttempts: nextFailures,
+        lockedUntil: lockedUntil?.toISOString() ?? null,
+      },
+    });
+  }
 
   private async issueSession(
     userRecord: Awaited<ReturnType<AuthRepository["findUserById"]>>,
@@ -109,18 +178,18 @@ export class AuthService {
       throw new AppError(401, "INVALID_CREDENTIALS", "Invalid dealer code or password.");
     }
 
+    await this.ensureAccountIsAvailable(userRecord, meta, {
+      dealerCode: input.dealerCode,
+      email: userRecord.email,
+    });
+
     const isValid = await bcrypt.compare(input.password, userRecord.passwordHash);
 
     if (!isValid) {
-      await this.repository.createAuditLog({
-        userId: userRecord.id,
-        requestId: meta.requestId,
-        action: AuditAction.LOGIN_FAILED,
+      await this.recordFailedLogin(userRecord, meta, {
         dealerCode: userRecord.dealer?.code ?? input.dealerCode,
         email: userRecord.email,
         message: "Dealer login failed: invalid password.",
-        ipAddress: meta.ipAddress,
-        userAgent: meta.userAgent,
       });
       throw new AppError(401, "INVALID_CREDENTIALS", "Invalid dealer code or password.");
     }
@@ -158,17 +227,16 @@ export class AuthService {
       throw new AppError(401, "INVALID_CREDENTIALS", "Invalid username or password.");
     }
 
+    await this.ensureAccountIsAvailable(userRecord, meta, {
+      email: userRecord.email ?? input.username,
+    });
+
     const isValid = await bcrypt.compare(input.password, userRecord.passwordHash);
 
     if (!isValid) {
-      await this.repository.createAuditLog({
-        userId: userRecord.id,
-        requestId: meta.requestId,
-        action: AuditAction.LOGIN_FAILED,
+      await this.recordFailedLogin(userRecord, meta, {
         email: userRecord.email,
         message: "Head Office login failed: invalid password.",
-        ipAddress: meta.ipAddress,
-        userAgent: meta.userAgent,
       });
       throw new AppError(401, "INVALID_CREDENTIALS", "Invalid username or password.");
     }
@@ -302,6 +370,29 @@ export class AuthService {
     }
   }
 
+  public async logoutAllSessions(userId: string, meta: RequestMeta) {
+    const userRecord = await this.repository.findUserById(userId);
+
+    if (!userRecord) {
+      return;
+    }
+
+    await this.repository.revokeAllUserSessions(userId);
+    await this.repository.createAuditLog({
+      userId,
+      requestId: meta.requestId,
+      action: AuditAction.LOGOUT,
+      email: userRecord.email,
+      dealerCode: userRecord.dealer?.code,
+      message: "All active sessions were logged out.",
+      ipAddress: meta.ipAddress,
+      userAgent: meta.userAgent,
+      metadata: {
+        scope: "all_sessions",
+      },
+    });
+  }
+
   public async requestPasswordReset(
     input: ForgotPasswordInput,
     meta: RequestMeta,
@@ -327,10 +418,12 @@ export class AuthService {
     }
 
     const otp = createOtpCode();
+    const resetToken = createPasswordResetTokenSecret();
     await this.repository.invalidatePasswordResetTokens(userRecord.id);
     await this.repository.createPasswordResetToken({
       userId: userRecord.id,
       otpHash: hashSecret(otp),
+      resetTokenHash: hashSecret(resetToken),
       expiresAt: new Date(
         Date.now() + env.PASSWORD_RESET_TTL_MINUTES * 60 * 1000,
       ),
@@ -360,7 +453,12 @@ export class AuthService {
     return {
       message:
         "If the account exists, a password reset OTP has been prepared for delivery.",
-      ...(env.NODE_ENV !== "production" ? { otpPreview: otp } : {}),
+      ...(env.NODE_ENV !== "production"
+        ? {
+            otpPreview: otp,
+            resetTokenPreview: resetToken,
+          }
+        : {}),
     };
   }
 
@@ -385,14 +483,20 @@ export class AuthService {
       userRecord.id,
     );
 
-    if (!token || token.otpHash !== hashSecret(input.otp)) {
+    const matchesOtp = Boolean(input.otp) && token?.otpHash === hashSecret(input.otp ?? "");
+    const matchesResetToken =
+      Boolean(input.token) &&
+      Boolean(token?.resetTokenHash) &&
+      token?.resetTokenHash === hashSecret(input.token ?? "");
+
+    if (!token || (!matchesOtp && !matchesResetToken)) {
       await this.repository.createAuditLog({
         userId: userRecord.id,
         requestId: meta.requestId,
         action: AuditAction.PASSWORD_RESET_FAILED,
         email: userRecord.email,
         dealerCode: userRecord.dealer?.code,
-        message: "Password reset failed: invalid OTP.",
+        message: "Password reset failed: invalid OTP or reset token.",
         ipAddress: meta.ipAddress,
         userAgent: meta.userAgent,
       });

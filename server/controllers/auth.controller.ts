@@ -47,6 +47,12 @@ export class AuthController {
     response.status(200).json({ message: "Logged out successfully." });
   }
 
+  public async logoutAllSessions(request: AuthenticatedRequest, response: Response) {
+    await this.service.logoutAllSessions(getSessionUser(request).id, getRequestMeta(request));
+    clearAuthCookies(response);
+    response.status(200).json({ message: "All sessions logged out successfully." });
+  }
+
   public async requestPasswordReset(request: Request, response: Response) {
     const result = await this.service.requestPasswordReset(
       request.body,

@@ -1,3 +1,5 @@
+import crypto from "node:crypto";
+
 import bcrypt from "bcryptjs";
 import { AuditAction } from "@prisma/client";
 
@@ -300,6 +302,19 @@ export class HeadOfficeService {
       throw new AppError(404, "EXPORT_NOT_FOUND", "The export file does not exist.");
     }
 
+    const computedSha256 = crypto
+      .createHash("sha256")
+      .update(exportRecord.csvContent)
+      .digest("hex");
+
+    if (exportRecord.csvSha256 && exportRecord.csvSha256 !== computedSha256) {
+      throw new AppError(
+        409,
+        "EXPORT_INTEGRITY_CHECK_FAILED",
+        "The export file failed integrity verification.",
+      );
+    }
+
     await this.orderRepository.markExportDownloaded(exportId);
     await this.authRepository.createAuditLog({
       userId: undefined,
@@ -315,7 +330,7 @@ export class HeadOfficeService {
     return {
       fileName: exportRecord.fileName,
       content: exportRecord.csvContent,
-      sha256: exportRecord.csvSha256,
+      sha256: exportRecord.csvSha256 ?? computedSha256,
     };
   }
 

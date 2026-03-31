@@ -73,7 +73,9 @@ export function PasswordResetDialog({
         newPassword: "",
       });
 
-      if (result.otpPreview) {
+      if (result.otpPreview && result.resetTokenPreview) {
+        toast.success(`Demo OTP: ${result.otpPreview} | Reset token ready`);
+      } else if (result.otpPreview) {
         toast.success(`Demo OTP: ${result.otpPreview}`);
       } else {
         toast.success(result.message);

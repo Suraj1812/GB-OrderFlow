@@ -97,6 +97,8 @@ describe("API integration", () => {
       passwordHash,
       role: "DEALER",
       active: true,
+      failedLoginAttempts: 0,
+      lockedUntil: null,
       dealerId: "dealer-1",
       dealer: {
         id: "dealer-1",
