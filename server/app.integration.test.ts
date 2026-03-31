@@ -12,6 +12,7 @@ const mockPrisma = {
   },
   session: {
     create: vi.fn(),
+    updateMany: vi.fn(),
   },
   auditLog: {
     create: vi.fn(),
@@ -47,6 +48,7 @@ describe("API integration", () => {
     mockPrisma.$queryRaw.mockResolvedValue([{ result: 1 }]);
     mockPrisma.user.update.mockResolvedValue({});
     mockPrisma.session.create.mockResolvedValue({ id: "session-1" });
+    mockPrisma.session.updateMany.mockResolvedValue({ count: 0 });
     mockPrisma.auditLog.create.mockResolvedValue({});
   });
 
@@ -55,12 +57,32 @@ describe("API integration", () => {
     const response = await invokeApp(createApp({ disableHttpLogger: true }), {
       method: "GET",
       url: "/api/health",
+      headers: {
+        "x-request-id": "health-check-1",
+      },
     });
 
     expect(response.statusCode).toBe(200);
     expect(response._getJSONData()).toEqual(
       expect.objectContaining({
         ok: true,
+        requestId: "health-check-1",
+      }),
+    );
+  });
+
+  it("returns readiness information", async () => {
+    const { createApp } = await import("./app.js");
+    const response = await invokeApp(createApp({ disableHttpLogger: true }), {
+      method: "GET",
+      url: "/ready",
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response._getJSONData()).toEqual(
+      expect.objectContaining({
+        ok: true,
+        ready: true,
       }),
     );
   });

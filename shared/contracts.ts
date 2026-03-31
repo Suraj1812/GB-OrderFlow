@@ -286,14 +286,27 @@ export const exportResultSchema = z.object({
   status: exportStatusSchema,
   downloadUrl: z.string().url().nullable(),
   generatedAt: z.string().nullable(),
+  sha256: z.string().length(64).nullable().optional(),
 });
 export type ExportResult = z.infer<typeof exportResultSchema>;
 
 export const healthResponseSchema = z.object({
   ok: z.boolean(),
+  ready: z.boolean().optional(),
   environment: z.string(),
+  version: z.string().optional(),
+  timestamp: z.string().optional(),
+  requestId: z.string().optional(),
 });
 export type HealthResponse = z.infer<typeof healthResponseSchema>;
+
+export const idempotencyKeySchema = z
+  .string()
+  .trim()
+  .min(16)
+  .max(128)
+  .regex(/^[A-Za-z0-9._:-]+$/, "Invalid idempotency key format.");
+export type IdempotencyKey = z.infer<typeof idempotencyKeySchema>;
 
 export const messageResponseSchema = z.object({
   message: z.string(),

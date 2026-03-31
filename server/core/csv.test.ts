@@ -60,4 +60,21 @@ describe("buildDeterministicCsv", () => {
     expect(lines[2]).toContain("SKU-B");
     expect(first.sha256).toHaveLength(64);
   });
+
+  it("keeps discount math stable at fixed two-decimal precision", () => {
+    const csv = buildDeterministicCsv({
+      ...orderFixture,
+      discountPct: 12.5,
+      lineItems: [
+        {
+          ...orderFixture.lineItems[0],
+          lineTotal: 100.05,
+          rate: 100.05,
+        },
+      ],
+    });
+
+    expect(csv.content).toContain("12.50");
+    expect(csv.content).toContain("87.54");
+  });
 });

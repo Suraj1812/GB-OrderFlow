@@ -10,6 +10,6 @@ declare module "express-serve-static-core" {
       dealerId?: string | null;
       dealerCode?: string | null;
     };
+    requestId?: string;
   }
 }
-

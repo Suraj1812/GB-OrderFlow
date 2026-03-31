@@ -7,12 +7,14 @@ import { AuthProvider } from "./auth/AuthContext";
 import { AppRouter } from "./router";
 import { theme } from "./theme";
 import { AppErrorBoundary } from "./ui/AppErrorBoundary";
+import { NetworkStatusBanner } from "./ui/NetworkStatusBanner";
 
 export function App() {
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
       <AppErrorBoundary>
+        <NetworkStatusBanner />
         <QueryClientProvider client={queryClient}>
           <AuthProvider>
             <AppRouter />

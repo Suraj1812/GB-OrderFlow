@@ -24,6 +24,7 @@ Enterprise-grade dealer ordering and Head Office approval workflow for Goel Brot
 - Modular backend with controllers, services, repositories, centralized errors, and request validation
 - PostgreSQL schema for dealers, users, sessions, SKUs, orders, order items, exports, and audit logs
 - Deterministic ERP-safe CSV generation with export history and signed download URLs
+- Request tracing, readiness probes, graceful shutdown, idempotent order submission, and race-safe approval/export flows
 - React Query caching, route lazy loading, virtualized SKU rendering, mobile-safe pagination, and responsive admin screens
 - CI workflow, Docker support, Prisma migrations, and deployment config for Vercel + Railway
 
@@ -58,6 +59,11 @@ Frontend: `http://127.0.0.1:5173`
 
 API: `http://127.0.0.1:4000`
 
+Operational endpoints:
+
+- `GET /health` and `GET /api/health` for liveness
+- `GET /ready` and `GET /api/ready` for readiness
+
 ## Production build
 
 ```bash
@@ -90,6 +96,8 @@ Dealers:
 - `npm run build` - full production build
 - `npm run db:migrate` - apply Prisma migrations
 - `npm run db:seed` - seed database data
+- `npm run stress:orders` - bulk dealer order stress runner against a live API
+- `npm run backup:db` - PostgreSQL backup wrapper using `pg_dump`
 
 ## Deployment
 
@@ -116,4 +124,5 @@ Dealers:
 
 - The CSV format is deterministic, UTF-8 BOM encoded, CRLF separated, and validated before export.
 - Export generation is idempotent per order and stored in `ExportHistory`.
+- Every API response includes an `x-request-id` header for tracing across logs and failures.
 - Dealer-facing endpoints intentionally never return internal rate or discount values.

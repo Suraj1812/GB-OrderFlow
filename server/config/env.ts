@@ -2,6 +2,8 @@ import { z } from "zod";
 
 const envSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
+  APP_VERSION: z.string().default("1.0.0"),
+  API_VERSION: z.string().default("v1"),
   PORT: z.coerce.number().int().positive().default(4000),
   DATABASE_URL: z
     .string()
@@ -21,6 +23,16 @@ const envSchema = z.object({
   PASSWORD_RESET_TTL_MINUTES: z.coerce.number().int().positive().default(15),
   DOWNLOAD_URL_TTL_MINUTES: z.coerce.number().int().positive().default(30),
   BCRYPT_SALT_ROUNDS: z.coerce.number().int().min(10).max(15).default(12),
+  REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().default(15_000),
+  GRACEFUL_SHUTDOWN_MS: z.coerce.number().int().positive().default(10_000),
+  BODY_LIMIT_KB: z.coerce.number().int().positive().max(1024).default(200),
+  API_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().positive().default(240),
+  AUTH_RATE_LIMIT_WINDOW_MINUTES: z.coerce.number().int().positive().default(15),
+  AUTH_RATE_LIMIT_MAX_ATTEMPTS: z.coerce.number().int().positive().default(10),
+  ALLOW_MULTIPLE_ACTIVE_SESSIONS: z
+    .string()
+    .default("false")
+    .transform((value) => value === "true"),
   COOKIE_DOMAIN: z.string().optional(),
   COOKIE_SECURE: z
     .string()
@@ -36,6 +48,7 @@ const envSchema = z.object({
   FRONTEND_ORIGIN: z.string().default("http://127.0.0.1:5173"),
   API_ORIGIN: z.string().default("http://127.0.0.1:4000"),
   COOKIE_SAME_SITE: z.enum(["lax", "strict", "none"]).default("lax"),
+  SENTRY_DSN: z.string().optional(),
   EMAIL_FROM: z.string().email().optional(),
 });
 

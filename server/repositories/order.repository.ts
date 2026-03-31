@@ -5,6 +5,29 @@ import type { DatabaseClient } from "../prisma/client.js";
 
 type Tx = Prisma.TransactionClient | PrismaClient;
 
+const orderInclude = {
+  dealer: true,
+  orderItems: {
+    include: {
+      sku: true,
+    },
+  },
+  exports: true,
+} satisfies Prisma.OrderInclude;
+
+const exportInclude = {
+  order: {
+    include: {
+      dealer: true,
+      orderItems: {
+        include: {
+          sku: true,
+        },
+      },
+    },
+  },
+} satisfies Prisma.ExportHistoryInclude;
+
 function buildHeadOfficeOrderWhere(query: OrderListQuery): Prisma.OrderWhereInput {
   return {
     ...(query.status !== "all"
@@ -63,7 +86,15 @@ export class OrderRepository {
   constructor(private readonly db: DatabaseClient) {}
 
   public transaction<T>(callback: (tx: Prisma.TransactionClient) => Promise<T>) {
-    return this.db.$transaction(callback);
+    return this.db.$transaction(callback, {
+      isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+    });
+  }
+
+  public async acquireOrderSequenceLock(tx: Tx = this.db) {
+    if ("$queryRaw" in tx) {
+      await tx.$queryRaw`SELECT pg_advisory_xact_lock(97412026)`;
+    }
   }
 
   public countOrdersCreatedOn(datePrefix: string, tx: Tx = this.db) {
@@ -79,15 +110,7 @@ export class OrderRepository {
   public listHeadOfficeOrders(query: OrderListQuery) {
     return this.db.order.findMany({
       where: buildHeadOfficeOrderWhere(query),
-      include: {
-        dealer: true,
-        orderItems: {
-          include: {
-            sku: true,
-          },
-        },
-        exports: true,
-      },
+      include: orderInclude,
       orderBy: {
         createdAt: "desc",
       },
@@ -105,21 +128,28 @@ export class OrderRepository {
   public findOrderById(orderId: string, tx: Tx = this.db) {
     return tx.order.findUnique({
       where: { id: orderId },
-      include: {
-        dealer: true,
-        orderItems: {
-          include: {
-            sku: true,
-          },
-        },
-        exports: true,
+      include: orderInclude,
+    });
+  }
+
+  public findOrderByIdempotencyKey(
+    dealerId: string,
+    idempotencyKey: string,
+    tx: Tx = this.db,
+  ) {
+    return tx.order.findFirst({
+      where: {
+        dealerId,
+        idempotencyKey,
       },
+      include: orderInclude,
     });
   }
 
   public createOrder(
     input: {
       orderNumber: string;
+      idempotencyKey?: string;
       dealerId: string;
       totalQty: number;
       grossAmount: Prisma.Decimal | number;
@@ -135,6 +165,7 @@ export class OrderRepository {
     return tx.order.create({
       data: {
         orderNumber: input.orderNumber,
+        idempotencyKey: input.idempotencyKey,
         dealerId: input.dealerId,
         totalQty: input.totalQty,
         grossAmount: input.grossAmount,
@@ -147,67 +178,61 @@ export class OrderRepository {
           })),
         },
       },
-      include: {
-        dealer: true,
-        orderItems: {
-          include: {
-            sku: true,
-          },
-        },
-        exports: true,
-      },
+      include: orderInclude,
     });
   }
 
-  public approveOrder(
+  public async approvePendingOrder(
     orderId: string,
     discountPct: number,
     netAmount: number,
     tx: Tx = this.db,
   ) {
-    return tx.order.update({
-      where: { id: orderId },
+    const approvedAt = new Date();
+    const result = await tx.order.updateMany({
+      where: {
+        id: orderId,
+        status: "PENDING",
+      },
       data: {
         status: "APPROVED",
         discountPct,
         netAmount,
-        approvedAt: new Date(),
+        approvedAt,
         rejectedAt: null,
         remarks: null,
       },
-      include: {
-        dealer: true,
-        orderItems: {
-          include: {
-            sku: true,
-          },
-        },
-        exports: true,
-      },
     });
+
+    if (result.count === 0) {
+      return null;
+    }
+
+    return this.findOrderById(orderId, tx);
   }
 
-  public rejectOrder(orderId: string, remarks: string, tx: Tx = this.db) {
-    return tx.order.update({
-      where: { id: orderId },
+  public async rejectPendingOrder(orderId: string, remarks: string, tx: Tx = this.db) {
+    const rejectedAt = new Date();
+    const result = await tx.order.updateMany({
+      where: {
+        id: orderId,
+        status: "PENDING",
+      },
       data: {
         status: "REJECTED",
         remarks,
-        rejectedAt: new Date(),
+        rejectedAt,
         approvedAt: null,
         discountPct: null,
         netAmount: null,
       },
-      include: {
-        dealer: true,
-        orderItems: {
-          include: {
-            sku: true,
-          },
-        },
-        exports: true,
-      },
     });
+
+    if (result.count === 0) {
+      return null;
+    }
+
+    return this.findOrderById(orderId, tx);
   }
 
   public upsertExportRecord(orderId: string, tx: Tx = this.db) {
@@ -228,50 +253,57 @@ export class OrderRepository {
       fileName?: string;
       csvSha256?: string;
       csvContent?: string;
+      attemptCount?: number | Prisma.IntFieldUpdateOperationsInput;
+      processingStartedAt?: Date | null;
       generatedAt?: Date;
       downloadedAt?: Date;
       lastError?: string | null;
     },
+    tx: Tx = this.db,
   ) {
-    return this.db.exportHistory.update({
+    return tx.exportHistory.update({
       where: { id: exportId },
       data: input,
     });
   }
 
+  public async claimExportForProcessing(orderId: string, tx: Tx = this.db) {
+    const processingStartedAt = new Date();
+    const result = await tx.exportHistory.updateMany({
+      where: {
+        orderId,
+        status: {
+          in: ["PENDING", "FAILED"],
+        },
+      },
+      data: {
+        status: "PROCESSING",
+        processingStartedAt,
+        attemptCount: {
+          increment: 1,
+        },
+        lastError: null,
+      },
+    });
+
+    if (result.count === 0) {
+      return this.findExportByOrderId(orderId);
+    }
+
+    return this.findExportByOrderId(orderId);
+  }
+
   public findExportById(exportId: string) {
     return this.db.exportHistory.findUnique({
       where: { id: exportId },
-      include: {
-        order: {
-          include: {
-            dealer: true,
-            orderItems: {
-              include: {
-                sku: true,
-              },
-            },
-          },
-        },
-      },
+      include: exportInclude,
     });
   }
 
   public findExportByOrderId(orderId: string) {
     return this.db.exportHistory.findUnique({
       where: { orderId },
-      include: {
-        order: {
-          include: {
-            dealer: true,
-            orderItems: {
-              include: {
-                sku: true,
-              },
-            },
-          },
-        },
-      },
+      include: exportInclude,
     });
   }
 

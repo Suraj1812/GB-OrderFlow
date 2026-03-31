@@ -225,6 +225,7 @@ export class AuthRepository {
 
   public createAuditLog(input: {
     userId?: string;
+    requestId?: string;
     action: AuditAction;
     email?: string | null;
     dealerCode?: string | null;
@@ -236,6 +237,7 @@ export class AuthRepository {
     return this.db.auditLog.create({
       data: {
         userId: input.userId,
+        requestId: input.requestId,
         action: input.action,
         email: input.email,
         dealerCode: input.dealerCode,
@@ -247,4 +249,3 @@ export class AuthRepository {
     });
   }
 }
-

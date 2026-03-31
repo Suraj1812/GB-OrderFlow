@@ -117,6 +117,14 @@ function buildOptimisticPayload(cart: CartState): CreateOrderInput {
   };
 }
 
+function createSubmissionKey() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return `order-${crypto.randomUUID()}`;
+  }
+
+  return `order-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 export function DealerCatalogPage() {
   const queryClient = useQueryClient();
   const { session } = useAuth();
@@ -189,8 +197,12 @@ export function DealerCatalogPage() {
   );
 
   const submitOrderMutation = useMutation({
-    mutationFn: async (payload: CreateOrderInput) => {
-      const response = await apiClient.post("/dealer/orders", payload);
+    mutationFn: async (variables: { payload: CreateOrderInput; idempotencyKey: string }) => {
+      const response = await apiClient.post("/dealer/orders", variables.payload, {
+        headers: {
+          "x-idempotency-key": variables.idempotencyKey,
+        },
+      });
       return response.data;
     },
     onMutate: async () => {
@@ -270,7 +282,10 @@ export function DealerCatalogPage() {
       return;
     }
 
-    submitOrderMutation.mutate(parsed.data);
+    submitOrderMutation.mutate({
+      payload: parsed.data,
+      idempotencyKey: createSubmissionKey(),
+    });
   }
 
   return (
@@ -351,7 +366,15 @@ export function DealerCatalogPage() {
 
       {catalogQuery.isPending ? (
         <LoadingPanel rows={5} />
-      ) : !catalogQuery.data || renderedItems.length === 0 ? (
+      ) : catalogQuery.isError || !catalogQuery.data ? (
+        <EmptyState
+          title="Catalogue unavailable"
+          description={getApiErrorMessage(
+            catalogQuery.error,
+            "We could not load the live SKU catalogue right now.",
+          )}
+        />
+      ) : renderedItems.length === 0 ? (
         <EmptyState
           title="No catalogue items found"
           description="Try another category or search term to find the required SKU."

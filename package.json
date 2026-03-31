@@ -13,6 +13,8 @@
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate deploy",
     "db:seed": "node --import tsx prisma/seed.ts",
+    "stress:orders": "node scripts/stress-orders.mjs",
+    "backup:db": "sh scripts/backup-database.sh",
     "build:client": "vite build",
     "build:server": "tsc -p server/tsconfig.json",
     "build": "npm run db:generate && npm run typecheck && npm run build:client && npm run build:server",

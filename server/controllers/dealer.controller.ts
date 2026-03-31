@@ -3,7 +3,7 @@ import type { Request, Response } from "express";
 import type { CatalogQuery, OrderListQuery } from "../../shared/contracts.js";
 import type { AuthenticatedRequest } from "../middleware/authenticate.js";
 import { DealerPortalService } from "../services/dealer-portal.service.js";
-import { getRequestMeta, getSessionUser } from "./controller.utils.js";
+import { getIdempotencyKey, getRequestMeta, getSessionUser } from "./controller.utils.js";
 
 export class DealerController {
   constructor(private readonly service: DealerPortalService) {}
@@ -26,6 +26,7 @@ export class DealerController {
       getSessionUser(request),
       request.body,
       getRequestMeta(request),
+      getIdempotencyKey(request),
     );
     response.status(201).json(result);
   }

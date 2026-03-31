@@ -14,7 +14,10 @@ export const queryClient = new QueryClient({
           }
         }
 
-        return failureCount < 1;
+        return failureCount < 2;
+      },
+      retryDelay(attemptIndex) {
+        return Math.min(400 * 2 ** attemptIndex, 2_000);
       },
       refetchOnWindowFocus: false,
     },

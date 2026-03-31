@@ -132,6 +132,7 @@ model Sku {
 model Order {
   id          String        @id @default(cuid())
   orderNumber String        @unique
+  idempotencyKey String?    @unique
   dealerId    String
   status      OrderStatus   @default(PENDING)
   totalQty    Int
@@ -148,6 +149,7 @@ model Order {
   exports     ExportHistory[]
 
   @@index([dealerId, createdAt])
+  @@index([dealerId, idempotencyKey])
   @@index([status, createdAt])
 }
 
@@ -171,9 +173,11 @@ model ExportHistory {
   id          String       @id @default(cuid())
   orderId     String       @unique
   status      ExportStatus @default(PENDING)
+  attemptCount Int         @default(0)
   fileName    String?
   csvSha256   String?
   csvContent  String?
+  processingStartedAt DateTime?
   generatedAt DateTime?
   downloadedAt DateTime?
   lastError   String?
@@ -187,6 +191,7 @@ model ExportHistory {
 model AuditLog {
   id         String      @id @default(cuid())
   userId     String?
+  requestId  String?
   action     AuditAction
   email      String?
   dealerCode String?
@@ -198,6 +203,7 @@ model AuditLog {
   user       User?       @relation(fields: [userId], references: [id], onDelete: SetNull)
 
   @@index([action, createdAt])
+  @@index([requestId, createdAt])
   @@index([userId, createdAt])
   @@index([dealerCode, createdAt])
 }

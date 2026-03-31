@@ -1,22 +1,25 @@
 import crypto from "node:crypto";
 
 import jwt from "jsonwebtoken";
+import { z } from "zod";
 
 import { env } from "../config/env.js";
 import { AppError } from "./errors.js";
 
-interface AccessTokenPayload {
-  sub: string;
-  role: "dealer" | "head_office";
-  displayName: string;
-  email: string | null;
-  dealerId?: string | null;
-  dealerCode?: string | null;
-}
+const accessTokenPayloadSchema = z.object({
+  sub: z.string().min(1),
+  role: z.enum(["dealer", "head_office"]),
+  displayName: z.string().min(1),
+  email: z.string().nullable(),
+  dealerId: z.string().nullable().optional(),
+  dealerCode: z.string().nullable().optional(),
+});
 
-interface DownloadTokenPayload {
-  exportId: string;
-}
+type AccessTokenPayload = z.infer<typeof accessTokenPayloadSchema>;
+
+const downloadTokenPayloadSchema = z.object({
+  exportId: z.string().min(1),
+});
 
 export function createAccessToken(payload: AccessTokenPayload) {
   return jwt.sign(payload, env.ACCESS_TOKEN_SECRET, {
@@ -26,13 +29,13 @@ export function createAccessToken(payload: AccessTokenPayload) {
 
 export function verifyAccessToken(token: string) {
   try {
-    return jwt.verify(token, env.ACCESS_TOKEN_SECRET) as AccessTokenPayload;
+    return accessTokenPayloadSchema.parse(jwt.verify(token, env.ACCESS_TOKEN_SECRET));
   } catch {
     throw new AppError(401, "UNAUTHORIZED", "Your session has expired.");
   }
 }
 
-export function createDownloadToken(payload: DownloadTokenPayload) {
+export function createDownloadToken(payload: { exportId: string }) {
   return jwt.sign(payload, env.DOWNLOAD_TOKEN_SECRET, {
     expiresIn: `${env.DOWNLOAD_URL_TTL_MINUTES}m`,
   });
@@ -40,7 +43,7 @@ export function createDownloadToken(payload: DownloadTokenPayload) {
 
 export function verifyDownloadToken(token: string) {
   try {
-    return jwt.verify(token, env.DOWNLOAD_TOKEN_SECRET) as DownloadTokenPayload;
+    return downloadTokenPayloadSchema.parse(jwt.verify(token, env.DOWNLOAD_TOKEN_SECRET));
   } catch {
     throw new AppError(401, "INVALID_DOWNLOAD", "The download link is no longer valid.");
   }
@@ -61,4 +64,3 @@ export function createOtpCode() {
 export function createCsrfToken() {
   return crypto.randomBytes(24).toString("base64url");
 }
-

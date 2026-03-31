@@ -1,6 +1,6 @@
 import type { Request } from "express";
 
-import type { SessionUser } from "../../shared/contracts.js";
+import { idempotencyKeySchema, type SessionUser } from "../../shared/contracts.js";
 import { AppError } from "../core/errors.js";
 import type { AuthenticatedRequest } from "../middleware/authenticate.js";
 import type { RequestMeta } from "../services/auth.service.js";
@@ -9,6 +9,7 @@ export function getRequestMeta(request: Request): RequestMeta {
   return {
     ipAddress: request.ip,
     userAgent: request.get("user-agent") ?? undefined,
+    requestId: request.requestId,
   };
 }
 
@@ -26,4 +27,18 @@ export function getRequiredParam(value: string | string[] | undefined, label: st
   }
 
   return value;
+}
+
+export function getIdempotencyKey(request: Request) {
+  const parsed = idempotencyKeySchema.safeParse(request.get("x-idempotency-key"));
+
+  if (!parsed.success) {
+    throw new AppError(
+      400,
+      "INVALID_IDEMPOTENCY_KEY",
+      parsed.error.issues[0]?.message ?? "A valid idempotency key is required.",
+    );
+  }
+
+  return parsed.data;
 }

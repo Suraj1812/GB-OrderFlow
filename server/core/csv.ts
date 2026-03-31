@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 
 import { z } from "zod";
 
-import type { Order } from "../../shared/contracts.js";
+import { orderSchema, type Order } from "../../shared/contracts.js";
 
 const exportRowSchema = z.object({
   PARTY_CODE: z.string().min(1),
@@ -27,6 +27,14 @@ function formatMoney(value: number) {
   return value.toFixed(2);
 }
 
+function toCents(value: number) {
+  return Math.round(value * 100);
+}
+
+function formatMoneyFromCents(value: number) {
+  return formatMoney(value / 100);
+}
+
 function escapeCsvValue(value: string) {
   if (/[,"\n\r]/.test(value)) {
     return `"${value.replaceAll("\"", "\"\"")}"`;
@@ -36,21 +44,30 @@ function escapeCsvValue(value: string) {
 }
 
 export function buildDeterministicCsv(order: Order) {
-  const discountPct = order.discountPct ?? 0;
-  const sortedItems = [...order.lineItems].sort((left, right) =>
+  const parsedOrder = orderSchema.parse(order);
+
+  if (parsedOrder.status !== "approved") {
+    throw new Error("Only approved orders can be exported.");
+  }
+
+  const discountPct = parsedOrder.discountPct ?? 0;
+  const discountBasisPoints = Math.round(discountPct * 100);
+  const sortedItems = [...parsedOrder.lineItems].sort((left, right) =>
     left.skuCode.localeCompare(right.skuCode),
   );
 
   const rows = sortedItems.map((item) =>
     exportRowSchema.parse({
-      PARTY_CODE: order.dealerName,
-      ORDER_DATE: formatDate(order.createdAt),
+      PARTY_CODE: parsedOrder.dealerName,
+      ORDER_DATE: formatDate(parsedOrder.createdAt),
       SERIES: "SO",
       ITEM_CODE: item.skuCode,
       QTY: String(item.qty),
       RATE: formatMoney(item.rate),
       DISC_PCT: formatMoney(discountPct),
-      NET_AMOUNT: formatMoney(item.lineTotal * (1 - discountPct / 100)),
+      NET_AMOUNT: formatMoneyFromCents(
+        Math.round((toCents(item.lineTotal) * (10_000 - discountBasisPoints)) / 10_000),
+      ),
     }),
   );
 
@@ -63,9 +80,8 @@ export function buildDeterministicCsv(order: Order) {
   const hash = crypto.createHash("sha256").update(csvWithBom).digest("hex");
 
   return {
-    fileName: `import-sales-bill-${order.orderNumber}.csv`,
+    fileName: `import-sales-bill-${parsedOrder.orderNumber}.csv`,
     content: csvWithBom,
     sha256: hash,
   };
 }
-

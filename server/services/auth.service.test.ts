@@ -24,6 +24,7 @@ describe("AuthService", () => {
         },
       }),
       createSession: vi.fn().mockResolvedValue({ id: "session-1" }),
+      revokeAllUserSessions: vi.fn().mockResolvedValue({ count: 0 }),
       updateLastLogin: vi.fn().mockResolvedValue(undefined),
       createAuditLog: vi.fn().mockResolvedValue(undefined),
     } as any;

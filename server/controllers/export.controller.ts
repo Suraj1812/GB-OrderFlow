@@ -18,6 +18,9 @@ export class ExportController {
     const result = await this.service.getDownloadableExport(payload.exportId);
 
     response.setHeader("Content-Type", "text/csv; charset=utf-8");
+    if (result.sha256) {
+      response.setHeader("x-export-sha256", result.sha256);
+    }
     response.setHeader(
       "Content-Disposition",
       `attachment; filename="${encodeURIComponent(result.fileName)}"`,

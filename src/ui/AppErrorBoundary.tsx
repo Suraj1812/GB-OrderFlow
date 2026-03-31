@@ -1,6 +1,8 @@
 import { Button, Paper, Stack, Typography } from "@mui/material";
 import { Component, type ErrorInfo, type ReactNode } from "react";
 
+import { captureClientException } from "../lib/monitoring";
+
 interface AppErrorBoundaryProps {
   children: ReactNode;
 }
@@ -22,7 +24,10 @@ export class AppErrorBoundary extends Component<
   }
 
   public componentDidCatch(error: Error, errorInfo: ErrorInfo) {
-    console.error("App render failure", error, errorInfo);
+    captureClientException(error, {
+      component: "AppErrorBoundary",
+      componentStack: errorInfo.componentStack,
+    });
   }
 
   public render() {
@@ -47,4 +52,3 @@ export class AppErrorBoundary extends Component<
     return this.props.children;
   }
 }
-

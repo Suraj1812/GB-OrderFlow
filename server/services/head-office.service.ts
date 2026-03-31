@@ -21,8 +21,16 @@ import { MasterRepository } from "../repositories/master.repository.js";
 import { OrderRepository } from "../repositories/order.repository.js";
 import { mapDealer, mapOrder, mapSku } from "./mappers.js";
 
+function toCents(value: number) {
+  return Math.round(value * 100);
+}
+
+function fromCents(value: number) {
+  return Number((value / 100).toFixed(2));
+}
+
 function buildSignedDownloadUrl(exportId: string) {
-  return `${env.API_ORIGIN.replace(/\/$/, "")}/api/exports/download?token=${createDownloadToken(
+  return `${env.API_ORIGIN.replace(/\/$/, "")}/api/${env.API_VERSION}/exports/download?token=${createDownloadToken(
     { exportId },
   )}`;
 }
@@ -51,17 +59,20 @@ export class HeadOfficeService {
     };
   }
 
-  private async generateExport(orderId: string) {
-    const exportRecord = await this.orderRepository.findExportByOrderId(orderId);
+  private async generateExport(orderId: string, meta?: { requestId?: string; actorId?: string }) {
+    const exportRecord = await this.orderRepository.claimExportForProcessing(orderId);
 
     if (!exportRecord) {
       throw new AppError(404, "EXPORT_NOT_FOUND", "Export record does not exist.");
     }
 
-    await this.orderRepository.updateExportRecord(exportRecord.id, {
-      status: "PROCESSING",
-      lastError: null,
-    });
+    if (exportRecord.status === "COMPLETED" && exportRecord.csvContent && exportRecord.fileName) {
+      return exportRecord;
+    }
+
+    if (exportRecord.status !== "PROCESSING") {
+      return exportRecord;
+    }
 
     try {
       const order = await this.orderRepository.findOrderById(orderId);
@@ -78,11 +89,14 @@ export class HeadOfficeService {
         fileName: csv.fileName,
         csvSha256: csv.sha256,
         csvContent: csv.content,
+        processingStartedAt: null,
         generatedAt: new Date(),
         lastError: null,
       });
 
       await this.authRepository.createAuditLog({
+        userId: meta?.actorId,
+        requestId: meta?.requestId,
         action: AuditAction.EXPORT_GENERATED,
         message: `Export generated for order ${mappedOrder.orderNumber}.`,
         dealerCode: mappedOrder.dealerCode,
@@ -97,6 +111,7 @@ export class HeadOfficeService {
     } catch (error) {
       await this.orderRepository.updateExportRecord(exportRecord.id, {
         status: "FAILED",
+        processingStartedAt: null,
         lastError: error instanceof Error ? error.message : "Unknown export error",
       });
       throw error;
@@ -117,12 +132,13 @@ export class HeadOfficeService {
       status: exportRecord.status.toLowerCase() as ExportResult["status"],
       downloadUrl: exportRecord.fileName ? buildSignedDownloadUrl(exportRecord.id) : null,
       generatedAt: exportRecord.generatedAt?.toISOString() ?? null,
+      sha256: exportRecord.csvSha256 ?? null,
     };
   }
 
-  private enqueueExport(orderId: string) {
+  private enqueueExport(orderId: string, meta?: { requestId?: string; actorId?: string }) {
     return this.exportQueue.enqueue(`export:${orderId}`, () =>
-      this.generateExport(orderId),
+      this.generateExport(orderId, meta),
     );
   }
 
@@ -130,7 +146,7 @@ export class HeadOfficeService {
     orderId: string,
     discountPct: number,
     actor: SessionUser,
-    meta: { ipAddress?: string; userAgent?: string },
+    meta: { ipAddress?: string; userAgent?: string; requestId?: string },
   ) {
     const prepared = await this.orderRepository.transaction(async (tx) => {
       const order = await this.orderRepository.findOrderById(orderId, tx);
@@ -145,39 +161,71 @@ export class HeadOfficeService {
 
       if (order.status === "APPROVED") {
         await this.orderRepository.upsertExportRecord(orderId, tx);
-        return order;
+        return {
+          order,
+          changed: false,
+        };
       }
 
-      const grossAmount = Number(order.grossAmount.toString());
-      const netAmount = Number(
-        (grossAmount * (1 - discountPct / 100)).toFixed(2),
+      const grossAmountCents = toCents(Number(order.grossAmount.toString()));
+      const discountBasisPoints = Math.round(discountPct * 100);
+      const netAmount = fromCents(
+        Math.round((grossAmountCents * (10_000 - discountBasisPoints)) / 10_000),
       );
 
-      const approvedOrder = await this.orderRepository.approveOrder(
+      const approvedOrder = await this.orderRepository.approvePendingOrder(
         orderId,
         discountPct,
         netAmount,
         tx,
       );
+
+      if (!approvedOrder) {
+        const latestOrder = await this.orderRepository.findOrderById(orderId, tx);
+
+        if (!latestOrder) {
+          throw new AppError(404, "ORDER_NOT_FOUND", "Order does not exist.");
+        }
+
+        if (latestOrder.status === "REJECTED") {
+          throw new AppError(409, "ORDER_ALREADY_REJECTED", "The order has already been rejected.");
+        }
+
+        await this.orderRepository.upsertExportRecord(orderId, tx);
+        return {
+          order: latestOrder,
+          changed: false,
+        };
+      }
+
       await this.orderRepository.upsertExportRecord(orderId, tx);
 
-      return approvedOrder;
+      return {
+        order: approvedOrder,
+        changed: true,
+      };
     });
 
-    await this.authRepository.createAuditLog({
-      userId: actor.id,
-      action: AuditAction.ORDER_APPROVED,
-      email: actor.email,
-      message: `Order ${prepared.orderNumber} approved.`,
-      ipAddress: meta.ipAddress,
-      userAgent: meta.userAgent,
-      metadata: {
-        orderId: prepared.id,
-        discountPct,
-      },
-    });
+    if (prepared.changed) {
+      await this.authRepository.createAuditLog({
+        userId: actor.id,
+        requestId: meta.requestId,
+        action: AuditAction.ORDER_APPROVED,
+        email: actor.email,
+        message: `Order ${prepared.order.orderNumber} approved.`,
+        ipAddress: meta.ipAddress,
+        userAgent: meta.userAgent,
+        metadata: {
+          orderId: prepared.order.id,
+          discountPct,
+        },
+      });
+    }
 
-    void this.enqueueExport(orderId).catch((error) => {
+    void this.enqueueExport(orderId, {
+      requestId: meta.requestId,
+      actorId: actor.id,
+    }).catch((error) => {
       logger.error({ err: error, orderId }, "Export queue task failed after approval");
     });
 
@@ -188,25 +236,49 @@ export class HeadOfficeService {
     orderId: string,
     remarks: string,
     actor: SessionUser,
-    meta: { ipAddress?: string; userAgent?: string },
+    meta: { ipAddress?: string; userAgent?: string; requestId?: string },
   ) {
-    const order = await this.orderRepository.findOrderById(orderId);
+    const rejected = await this.orderRepository.transaction(async (tx) => {
+      const order = await this.orderRepository.findOrderById(orderId, tx);
 
-    if (!order) {
-      throw new AppError(404, "ORDER_NOT_FOUND", "Order does not exist.");
-    }
+      if (!order) {
+        throw new AppError(404, "ORDER_NOT_FOUND", "Order does not exist.");
+      }
 
-    if (order.status !== "PENDING") {
-      throw new AppError(400, "ORDER_NOT_PENDING", "Only pending orders can be rejected.");
-    }
+      if (order.status === "APPROVED") {
+        throw new AppError(409, "ORDER_ALREADY_APPROVED", "Approved orders cannot be rejected.");
+      }
 
-    const rejected = await this.orderRepository.rejectOrder(
-      orderId,
-      remarks || "Rejected by Head Office",
-    );
+      if (order.status === "REJECTED") {
+        return order;
+      }
+
+      const updatedOrder = await this.orderRepository.rejectPendingOrder(
+        orderId,
+        remarks || "Rejected by Head Office",
+        tx,
+      );
+
+      if (!updatedOrder) {
+        const latestOrder = await this.orderRepository.findOrderById(orderId, tx);
+
+        if (!latestOrder) {
+          throw new AppError(404, "ORDER_NOT_FOUND", "Order does not exist.");
+        }
+
+        if (latestOrder.status === "APPROVED") {
+          throw new AppError(409, "ORDER_ALREADY_APPROVED", "Approved orders cannot be rejected.");
+        }
+
+        return latestOrder;
+      }
+
+      return updatedOrder;
+    });
 
     await this.authRepository.createAuditLog({
       userId: actor.id,
+      requestId: meta.requestId,
       action: AuditAction.ORDER_REJECTED,
       email: actor.email,
       message: `Order ${rejected.orderNumber} rejected.`,
@@ -243,6 +315,7 @@ export class HeadOfficeService {
     return {
       fileName: exportRecord.fileName,
       content: exportRecord.csvContent,
+      sha256: exportRecord.csvSha256,
     };
   }
 
@@ -259,16 +332,15 @@ export class HeadOfficeService {
 
     const exportRecord = await this.orderRepository.upsertExportRecord(orderId);
 
-    if (
-      exportRecord.status === "FAILED" ||
-      exportRecord.status === "PENDING" ||
-      exportRecord.status === "PROCESSING"
-    ) {
+    if (exportRecord.status === "FAILED") {
       await this.orderRepository.updateExportRecord(exportRecord.id, {
-        status: exportRecord.status === "FAILED" ? "PENDING" : exportRecord.status,
-        lastError: exportRecord.status === "FAILED" ? null : exportRecord.lastError,
+        status: "PENDING",
+        processingStartedAt: null,
+        lastError: null,
       });
+    }
 
+    if (exportRecord.status === "FAILED" || exportRecord.status === "PENDING") {
       void this.enqueueExport(orderId).catch((error) => {
         logger.error({ err: error, orderId }, "Export queue task failed on export request");
       });

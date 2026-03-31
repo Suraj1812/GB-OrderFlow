@@ -1,3 +1,4 @@
+import { Prisma } from "@prisma/client";
 import { AuditAction } from "@prisma/client";
 
 import type {
@@ -6,6 +7,7 @@ import type {
   OrderListQuery,
   SessionUser,
 } from "../../shared/contracts.js";
+import { createOrderSchema } from "../../shared/contracts.js";
 import { AppError } from "../core/errors.js";
 import { buildPaginationMeta } from "../core/pagination.js";
 import { AuthRepository } from "../repositories/auth.repository.js";
@@ -16,6 +18,10 @@ import { mapCatalogItem, mapDealerOrder } from "./mappers.js";
 
 function buildOrderNumberPrefix() {
   return new Date().toISOString().slice(0, 10).replaceAll("-", "");
+}
+
+function toCents(value: number) {
+  return Math.round(value * 100);
 }
 
 export class DealerPortalService {
@@ -59,20 +65,31 @@ export class DealerPortalService {
   public async createOrder(
     user: SessionUser,
     input: CreateOrderInput,
-    meta: { ipAddress?: string; userAgent?: string },
+    meta: { ipAddress?: string; userAgent?: string; requestId?: string },
+    idempotencyKey: string,
   ) {
     if (!user.dealerId) {
       throw new AppError(403, "FORBIDDEN", "Dealer session is not linked to a dealer account.");
     }
 
+    const parsedInput = createOrderSchema.parse(input);
     const dealer = await this.masterRepository.findDealerById(user.dealerId);
 
     if (!dealer || !dealer.active) {
       throw new AppError(403, "FORBIDDEN", "Dealer account is inactive.");
     }
 
+    const existingOrder = await this.orderRepository.findOrderByIdempotencyKey(
+      dealer.id,
+      idempotencyKey,
+    );
+
+    if (existingOrder) {
+      return mapDealerOrder(existingOrder);
+    }
+
     const aggregatedItems = new Map<string, number>();
-    for (const item of input.items) {
+    for (const item of parsedInput.items) {
       aggregatedItems.set(item.skuId, (aggregatedItems.get(item.skuId) ?? 0) + item.qty);
     }
 
@@ -85,59 +102,86 @@ export class DealerPortalService {
 
     const skuMap = new Map(skuRecords.map((record) => [record.id, record]));
 
-    const createdOrder = await this.orderRepository.transaction(async (tx) => {
-      const prefix = buildOrderNumberPrefix();
-      const count = await this.orderRepository.countOrdersCreatedOn(prefix, tx);
-      const orderNumber = `GB-${prefix}-${String(count + 1).padStart(4, "0")}`;
+    try {
+      const createdOrder = await this.orderRepository.transaction(async (tx) => {
+        const previousOrder = await this.orderRepository.findOrderByIdempotencyKey(
+          dealer.id,
+          idempotencyKey,
+          tx,
+        );
 
-      const items = skuIds.map((skuId) => {
-        const sku = skuMap.get(skuId);
-        if (!sku) {
-          throw new AppError(400, "INVALID_SKU_SELECTION", "One or more items are no longer available.");
+        if (previousOrder) {
+          return previousOrder;
         }
 
-        const qty = aggregatedItems.get(skuId) ?? 0;
-        const rate = Number(sku.rate.toString());
-        return {
-          skuId,
-          qty,
-          rate,
-          lineTotal: Number((rate * qty).toFixed(2)),
-        };
+        await this.orderRepository.acquireOrderSequenceLock(tx);
+
+        const prefix = buildOrderNumberPrefix();
+        const count = await this.orderRepository.countOrdersCreatedOn(prefix, tx);
+        const orderNumber = `GB-${prefix}-${String(count + 1).padStart(4, "0")}`;
+
+        const items = skuIds.map((skuId) => {
+          const sku = skuMap.get(skuId);
+          if (!sku) {
+            throw new AppError(400, "INVALID_SKU_SELECTION", "One or more items are no longer available.");
+          }
+
+          const qty = aggregatedItems.get(skuId) ?? 0;
+          const rate = Number(sku.rate.toString());
+          return {
+            skuId,
+            qty,
+            rate,
+            lineTotal: toCents(rate) * qty / 100,
+          };
+        });
+
+        const totalQty = items.reduce((sum, item) => sum + item.qty, 0);
+        const grossAmount = items.reduce((sum, item) => sum + item.lineTotal, 0);
+
+        return this.orderRepository.createOrder(
+          {
+            orderNumber,
+            idempotencyKey,
+            dealerId: dealer.id,
+            totalQty,
+            grossAmount,
+            items,
+          },
+          tx,
+        );
       });
 
-      const totalQty = items.reduce((sum, item) => sum + item.qty, 0);
-      const grossAmount = Number(
-        items.reduce((sum, item) => sum + item.lineTotal, 0).toFixed(2),
-      );
-
-      return this.orderRepository.createOrder(
-        {
-          orderNumber,
-          dealerId: dealer.id,
-          totalQty,
-          grossAmount,
-          items,
+      await this.authRepository.createAuditLog({
+        userId: user.id,
+        requestId: meta.requestId,
+        action: AuditAction.ORDER_CREATED,
+        dealerCode: user.dealerCode,
+        email: user.email,
+        message: `Dealer order ${createdOrder.orderNumber} created.`,
+        ipAddress: meta.ipAddress,
+        userAgent: meta.userAgent,
+        metadata: {
+          orderId: createdOrder.id,
+          totalQty: createdOrder.totalQty,
+          idempotencyKey,
         },
-        tx,
-      );
-    });
+      });
 
-    await this.authRepository.createAuditLog({
-      userId: user.id,
-      action: AuditAction.ORDER_CREATED,
-      dealerCode: user.dealerCode,
-      email: user.email,
-      message: `Dealer order ${createdOrder.orderNumber} created.`,
-      ipAddress: meta.ipAddress,
-      userAgent: meta.userAgent,
-      metadata: {
-        orderId: createdOrder.id,
-        totalQty: createdOrder.totalQty,
-      },
-    });
+      return mapDealerOrder(createdOrder);
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+        const duplicateOrder = await this.orderRepository.findOrderByIdempotencyKey(
+          dealer.id,
+          idempotencyKey,
+        );
 
-    return mapDealerOrder(createdOrder);
+        if (duplicateOrder) {
+          return mapDealerOrder(duplicateOrder);
+        }
+      }
+
+      throw error;
+    }
   }
 }
-

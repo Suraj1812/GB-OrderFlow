@@ -1,6 +1,7 @@
 import type { NextFunction, Request, Response } from "express";
 import rateLimit from "express-rate-limit";
 
+import { idempotencyKeySchema } from "../../shared/contracts.js";
 import { env } from "../config/env.js";
 import { cookieNames } from "../core/cookies.js";
 import { AppError } from "../core/errors.js";
@@ -35,23 +36,44 @@ export function sanitizeRequest(request: Request, _response: Response, next: Nex
     request.query = sanitizeValue(request.query) as Request["query"];
   }
 
+  if (request.params) {
+    request.params = sanitizeValue(request.params) as Request["params"];
+  }
+
   next();
 }
 
 export const apiRateLimiter = rateLimit({
   windowMs: 60_000,
-  limit: 200,
+  limit: env.API_RATE_LIMIT_PER_MINUTE,
   standardHeaders: true,
   legacyHeaders: false,
 });
 
 export const authRateLimiter = rateLimit({
-  windowMs: 15 * 60_000,
-  limit: 10,
+  windowMs: env.AUTH_RATE_LIMIT_WINDOW_MINUTES * 60_000,
+  limit: env.AUTH_RATE_LIMIT_MAX_ATTEMPTS,
   skipSuccessfulRequests: true,
   standardHeaders: true,
   legacyHeaders: false,
 });
+
+export function requireIdempotencyKey(request: Request, _response: Response, next: NextFunction) {
+  const parsed = idempotencyKeySchema.safeParse(request.get("x-idempotency-key"));
+
+  if (!parsed.success) {
+    next(
+      new AppError(
+        400,
+        "INVALID_IDEMPOTENCY_KEY",
+        parsed.error.issues[0]?.message ?? "A valid idempotency key is required.",
+      ),
+    );
+    return;
+  }
+
+  next();
+}
 
 export function requireCsrf(request: Request, _response: Response, next: NextFunction) {
   if (["GET", "HEAD", "OPTIONS"].includes(request.method)) {
@@ -71,7 +93,12 @@ export function requireCsrf(request: Request, _response: Response, next: NextFun
 }
 
 export function corsOriginValidator(origin: string | undefined, callback: (error: Error | null, allow?: boolean) => void) {
-  if (!origin || env.corsOrigins.includes(origin)) {
+  if (
+    !origin ||
+    env.corsOrigins.includes(origin) ||
+    origin === env.FRONTEND_ORIGIN ||
+    origin === env.API_ORIGIN
+  ) {
     callback(null, true);
     return;
   }

@@ -22,18 +22,19 @@ import { ExportController } from "./controllers/export.controller.js";
 import { HeadOfficeController } from "./controllers/head-office.controller.js";
 import { asyncHandler } from "./http/async-handler.js";
 import { authenticate, requireRole } from "./middleware/authenticate.js";
-import { authRateLimiter, requireCsrf } from "./middleware/security.js";
+import { authRateLimiter, requireCsrf, requireIdempotencyKey } from "./middleware/security.js";
 import { validateRequest } from "./middleware/validate-request.js";
 import { prisma } from "./prisma/client.js";
 import { AuthRepository } from "./repositories/auth.repository.js";
 import { CatalogRepository } from "./repositories/catalog.repository.js";
 import { MasterRepository } from "./repositories/master.repository.js";
 import { OrderRepository } from "./repositories/order.repository.js";
+import { env } from "./config/env.js";
 import { AuthService } from "./services/auth.service.js";
 import { DealerPortalService } from "./services/dealer-portal.service.js";
 import { HeadOfficeService } from "./services/head-office.service.js";
 import { InMemoryTaskQueue } from "./core/queue.js";
-import { env } from "./config/env.js";
+import { isReady } from "./core/runtime-state.js";
 
 export function createRouter() {
   const router = Router();
@@ -70,12 +71,43 @@ export function createRouter() {
     ),
   );
 
-  router.get("/health", asyncHandler(async (_request: Request, response: Response) => {
+  router.get("/health", asyncHandler(async (request: Request, response: Response) => {
+    response.status(200).json(
+      healthResponseSchema.parse({
+        ok: true,
+        ready: isReady(),
+        environment: env.NODE_ENV,
+        version: env.APP_VERSION,
+        timestamp: new Date().toISOString(),
+        requestId: request.requestId,
+      }),
+    );
+  }));
+
+  router.get("/ready", asyncHandler(async (request: Request, response: Response) => {
+    if (!isReady()) {
+      response.status(503).json(
+        healthResponseSchema.parse({
+          ok: false,
+          ready: false,
+          environment: env.NODE_ENV,
+          version: env.APP_VERSION,
+          timestamp: new Date().toISOString(),
+          requestId: request.requestId,
+        }),
+      );
+      return;
+    }
+
     await prisma.$queryRaw`SELECT 1`;
     response.status(200).json(
       healthResponseSchema.parse({
         ok: true,
+        ready: true,
         environment: env.NODE_ENV,
+        version: env.APP_VERSION,
+        timestamp: new Date().toISOString(),
+        requestId: request.requestId,
       }),
     );
   }));
@@ -140,6 +172,7 @@ export function createRouter() {
     authenticate,
     requireRole("dealer"),
     requireCsrf,
+    requireIdempotencyKey,
     validateRequest({ body: createOrderSchema }),
     asyncHandler((request, response) => dealerController.createOrder(request, response)),
   );

@@ -24,6 +24,7 @@ import { mapSessionUser } from "./mappers.js";
 export interface RequestMeta {
   ipAddress?: string;
   userAgent?: string;
+  requestId?: string;
 }
 
 function buildRefreshCookieValue(sessionId: string, rawToken: string) {
@@ -53,6 +54,10 @@ export class AuthService {
   ) {
     if (!userRecord || !userRecord.active) {
       throw new AppError(401, "UNAUTHORIZED", "Account is not active.");
+    }
+
+    if (!env.ALLOW_MULTIPLE_ACTIVE_SESSIONS) {
+      await this.repository.revokeAllUserSessions(userRecord.id);
     }
 
     const refreshToken = createRefreshToken();
@@ -94,6 +99,7 @@ export class AuthService {
 
     if (!userRecord) {
       await this.repository.createAuditLog({
+        requestId: meta.requestId,
         action: AuditAction.LOGIN_FAILED,
         dealerCode: input.dealerCode,
         message: "Dealer login failed: user not found.",
@@ -108,6 +114,7 @@ export class AuthService {
     if (!isValid) {
       await this.repository.createAuditLog({
         userId: userRecord.id,
+        requestId: meta.requestId,
         action: AuditAction.LOGIN_FAILED,
         dealerCode: userRecord.dealer?.code ?? input.dealerCode,
         email: userRecord.email,
@@ -122,6 +129,7 @@ export class AuthService {
 
     await this.repository.createAuditLog({
       userId: userRecord.id,
+      requestId: meta.requestId,
       action: AuditAction.LOGIN_SUCCESS,
       dealerCode: userRecord.dealer?.code,
       email: userRecord.email,
@@ -140,6 +148,7 @@ export class AuthService {
 
     if (!userRecord) {
       await this.repository.createAuditLog({
+        requestId: meta.requestId,
         action: AuditAction.LOGIN_FAILED,
         email: input.username,
         message: "Head Office login failed: user not found.",
@@ -154,6 +163,7 @@ export class AuthService {
     if (!isValid) {
       await this.repository.createAuditLog({
         userId: userRecord.id,
+        requestId: meta.requestId,
         action: AuditAction.LOGIN_FAILED,
         email: userRecord.email,
         message: "Head Office login failed: invalid password.",
@@ -167,6 +177,7 @@ export class AuthService {
 
     await this.repository.createAuditLog({
       userId: userRecord.id,
+      requestId: meta.requestId,
       action: AuditAction.LOGIN_SUCCESS,
       email: userRecord.email,
       message: "Head Office login succeeded.",
@@ -188,8 +199,13 @@ export class AuthService {
       sessionRecord.refreshTokenHash !== hashSecret(rawToken) ||
       !sessionRecord.user.active
     ) {
+      if (sessionRecord && !sessionRecord.revokedAt) {
+        await this.repository.revokeSession(sessionId);
+      }
+
       await this.repository.createAuditLog({
         userId: sessionRecord?.userId,
+        requestId: meta.requestId,
         action: AuditAction.REFRESH_FAILED,
         email: sessionRecord?.user.email,
         dealerCode: sessionRecord?.user.dealer?.code,
@@ -214,6 +230,7 @@ export class AuthService {
 
     await this.repository.createAuditLog({
       userId: sessionRecord.user.id,
+      requestId: meta.requestId,
       action: AuditAction.REFRESH_SUCCESS,
       email: sessionRecord.user.email,
       dealerCode: sessionRecord.user.dealer?.code,
@@ -265,6 +282,7 @@ export class AuthService {
         await this.repository.revokeSession(sessionId);
         await this.repository.createAuditLog({
           userId: sessionRecord.user.id,
+          requestId: meta.requestId,
           action: AuditAction.LOGOUT,
           email: sessionRecord.user.email,
           dealerCode: sessionRecord.user.dealer?.code,
@@ -274,7 +292,13 @@ export class AuthService {
         });
       }
     } catch (error) {
-      logger.warn({ err: error }, "Logout skipped because refresh token was invalid.");
+      logger.warn(
+        {
+          err: error,
+          requestId: meta.requestId,
+        },
+        "Logout skipped because refresh token was invalid.",
+      );
     }
   }
 
@@ -288,6 +312,7 @@ export class AuthService {
 
     if (!userRecord) {
       await this.repository.createAuditLog({
+        requestId: meta.requestId,
         action: AuditAction.PASSWORD_RESET_REQUEST,
         email: input.identifier,
         message: "Password reset requested for unknown user.",
@@ -313,6 +338,7 @@ export class AuthService {
 
     await this.repository.createAuditLog({
       userId: userRecord.id,
+      requestId: meta.requestId,
       action: AuditAction.PASSWORD_RESET_REQUEST,
       email: userRecord.email,
       dealerCode: userRecord.dealer?.code,
@@ -326,6 +352,7 @@ export class AuthService {
         userId: userRecord.id,
         identifier: input.identifier,
         otpPreview: otp,
+        requestId: meta.requestId,
       },
       "Password reset OTP generated",
     );
@@ -343,6 +370,14 @@ export class AuthService {
     );
 
     if (!userRecord) {
+      await this.repository.createAuditLog({
+        requestId: meta.requestId,
+        action: AuditAction.PASSWORD_RESET_FAILED,
+        email: input.identifier,
+        message: "Password reset failed: user not found.",
+        ipAddress: meta.ipAddress,
+        userAgent: meta.userAgent,
+      });
       throw new AppError(400, "INVALID_RESET_REQUEST", "Reset token is invalid.");
     }
 
@@ -351,6 +386,16 @@ export class AuthService {
     );
 
     if (!token || token.otpHash !== hashSecret(input.otp)) {
+      await this.repository.createAuditLog({
+        userId: userRecord.id,
+        requestId: meta.requestId,
+        action: AuditAction.PASSWORD_RESET_FAILED,
+        email: userRecord.email,
+        dealerCode: userRecord.dealer?.code,
+        message: "Password reset failed: invalid OTP.",
+        ipAddress: meta.ipAddress,
+        userAgent: meta.userAgent,
+      });
       throw new AppError(400, "INVALID_RESET_REQUEST", "Reset token is invalid.");
     }
 
@@ -365,6 +410,7 @@ export class AuthService {
 
     await this.repository.createAuditLog({
       userId: userRecord.id,
+      requestId: meta.requestId,
       action: AuditAction.PASSWORD_RESET_SUCCESS,
       email: userRecord.email,
       dealerCode: userRecord.dealer?.code,
