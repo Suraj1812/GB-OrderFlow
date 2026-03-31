@@ -4,6 +4,7 @@ const envSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   APP_VERSION: z.string().default("1.0.0"),
   API_VERSION: z.string().default("v1"),
+  HOST: z.string().default(""),
   PORT: z.coerce.number().int().positive().default(4000),
   DATABASE_URL: z
     .string()
@@ -63,6 +64,7 @@ const parsed = envSchema.parse(process.env);
 export const env = {
   ...parsed,
   isProduction: parsed.NODE_ENV === "production",
+  host: parsed.HOST.trim() || (parsed.NODE_ENV === "production" ? "0.0.0.0" : "127.0.0.1"),
   corsOrigins: parsed.CORS_ORIGINS.split(",")
     .map((value) => value.trim())
     .filter(Boolean),

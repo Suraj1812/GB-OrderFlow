@@ -12,6 +12,31 @@ import { prisma } from "./prisma/client.js";
 const app = createApp();
 let shuttingDown = false;
 
+async function disconnectDatabase() {
+  try {
+    await prisma.$disconnect();
+  } catch (error) {
+    captureServerException(error, { component: "databaseDisconnect" });
+  }
+}
+
+async function handleStartupError(error: NodeJS.ErrnoException) {
+  captureServerException(error, { component: "startup" });
+  logger.fatal(
+    {
+      err: error,
+      host: env.host,
+      port: env.PORT,
+      code: error.code,
+      syscall: error.syscall,
+    },
+    "Failed to start GB OrderFlow API",
+  );
+
+  await disconnectDatabase();
+  process.exit(1);
+}
+
 async function shutdown(signal: NodeJS.Signals) {
   if (shuttingDown) {
     return;
@@ -25,19 +50,22 @@ async function shutdown(signal: NodeJS.Signals) {
     logger.error("Graceful shutdown timed out");
     process.exit(1);
   }, env.GRACEFUL_SHUTDOWN_MS);
+  forceExitTimer.unref();
 
   try {
-    await new Promise<void>((resolve, reject) => {
-      server.close((error) => {
-        if (error) {
-          reject(error);
-          return;
-        }
+    if (server.listening) {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => {
+          if (error) {
+            reject(error);
+            return;
+          }
 
-        resolve();
+          resolve();
+        });
       });
-    });
-    await prisma.$disconnect();
+    }
+    await disconnectDatabase();
     clearTimeout(forceExitTimer);
     process.exit(0);
   } catch (error) {
@@ -47,15 +75,22 @@ async function shutdown(signal: NodeJS.Signals) {
   }
 }
 
-const server: Server = app.listen(env.PORT, () => {
+const server: Server = app.listen(env.PORT, env.host);
+
+server.once("listening", () => {
   logger.info(
     {
+      host: env.host,
       port: env.PORT,
       environment: env.NODE_ENV,
       version: env.APP_VERSION,
     },
     "GB OrderFlow API listening",
   );
+});
+
+server.once("error", (error: NodeJS.ErrnoException) => {
+  void handleStartupError(error);
 });
 
 server.keepAliveTimeout = 65_000;
