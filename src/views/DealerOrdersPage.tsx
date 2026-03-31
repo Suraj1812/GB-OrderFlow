@@ -4,21 +4,23 @@ import {
   Card,
   CardContent,
   Chip,
-  Grid,
   InputAdornment,
   Paper,
   Stack,
   TextField,
   Typography,
 } from "@mui/material";
-import { startTransition, useDeferredValue, useMemo, useState } from "react";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { startTransition, useDeferredValue, useEffect, useState } from "react";
 
-import type { DealerOrderView } from "../../shared/contracts";
-import { apiClient } from "../api/client";
-import { useApiQuery } from "../hooks/useApiQuery";
+import type { OrderListQuery, PaginatedDealerOrdersResponse } from "../../shared/contracts";
+import { apiClient, getApiErrorMessage } from "../api/client";
+import { queryKeys } from "../api/query-keys";
 import { formatCurrency, formatDateTime } from "../lib/format";
 import { EmptyState } from "../ui/EmptyState";
+import { LoadingPanel } from "../ui/LoadingPanel";
 import { PageHeader } from "../ui/PageHeader";
+import { PaginationBar } from "../ui/PaginationBar";
 import { StatusChip } from "../ui/StatusChip";
 
 const statusOptions = [
@@ -29,51 +31,44 @@ const statusOptions = [
 ] as const;
 
 export function DealerOrdersPage() {
-  const [statusFilter, setStatusFilter] = useState<(typeof statusOptions)[number]["value"]>("all");
-  const [search, setSearch] = useState("");
-  const deferredSearch = useDeferredValue(search);
+  const [statusFilter, setStatusFilter] = useState<OrderListQuery["status"]>("all");
+  const [searchInput, setSearchInput] = useState("");
+  const [page, setPage] = useState(1);
+  const deferredSearch = useDeferredValue(searchInput);
 
-  const ordersQuery = useApiQuery(
-    async (signal) => {
-      const response = await apiClient.get<DealerOrderView[]>("/dealer/orders", {
-        signal,
+  useEffect(() => {
+    setPage(1);
+  }, [deferredSearch, statusFilter]);
+
+  const queryState: OrderListQuery = {
+    page,
+    pageSize: 10,
+    search: deferredSearch.trim(),
+    status: statusFilter,
+  };
+
+  const ordersQuery = useQuery({
+    queryKey: queryKeys.dealerOrders(queryState),
+    queryFn: async () => {
+      const response = await apiClient.get<PaginatedDealerOrdersResponse>("/dealer/orders", {
+        params: queryState,
       });
       return response.data;
     },
-    [],
-  );
+    placeholderData: keepPreviousData,
+  });
 
-  const orders = ordersQuery.data ?? [];
-
-  const filteredOrders = useMemo(() => {
-    const query = deferredSearch.trim().toLowerCase();
-
-    return orders.filter((order) => {
-      const matchesStatus = statusFilter === "all" || order.status === statusFilter;
-      const matchesSearch =
-        !query ||
-        order.orderNumber.toLowerCase().includes(query) ||
-        order.lineItems.some(
-          (item) =>
-            item.skuName.toLowerCase().includes(query) ||
-            item.skuCode.toLowerCase().includes(query),
-        );
-
-      return matchesStatus && matchesSearch;
-    });
-  }, [deferredSearch, orders, statusFilter]);
-
-  if (ordersQuery.loading) {
-    return <Typography color="text.secondary">Loading orders...</Typography>;
+  if (ordersQuery.isPending) {
+    return <LoadingPanel rows={5} />;
   }
 
-  if (!ordersQuery.data) {
+  if (ordersQuery.isError || !ordersQuery.data) {
     return (
       <EmptyState
         title="Orders unavailable"
-        description={ordersQuery.error ?? "We could not load your order history."}
+        description={getApiErrorMessage(ordersQuery.error, "We could not load your order history.")}
         actionLabel="Reload"
-        onAction={ordersQuery.refresh}
+        onAction={() => void ordersQuery.refetch()}
       />
     );
   }
@@ -83,7 +78,7 @@ export function DealerOrdersPage() {
       <PageHeader
         eyebrow="Order History"
         title="Track every submitted order"
-        description="You can review order references, status updates, final approved totals, and any rejection remarks. Discount details remain internal to Head Office."
+        description="Search by order reference or item, filter by status, and review final approved totals without exposing internal discount logic."
       />
 
       <Paper sx={{ p: 2.5 }}>
@@ -91,10 +86,10 @@ export function DealerOrdersPage() {
           <TextField
             fullWidth
             placeholder="Search by order number, SKU code, or item name"
-            value={search}
+            value={searchInput}
             onChange={(event) => {
-              const nextValue = event.target.value;
-              startTransition(() => setSearch(nextValue));
+              const value = event.target.value;
+              startTransition(() => setSearchInput(value));
             }}
             InputProps={{
               startAdornment: (
@@ -118,16 +113,16 @@ export function DealerOrdersPage() {
         </Stack>
       </Paper>
 
-      {filteredOrders.length === 0 ? (
+      {ordersQuery.data.items.length === 0 ? (
         <EmptyState
           title="No matching orders"
-          description="Try adjusting the status filter or search term to find a specific order."
+          description="Try a broader search or another status to find the order you need."
         />
       ) : (
-        <Grid container spacing={3}>
-          {filteredOrders.map((order) => (
-            <Grid key={order.id} size={{ xs: 12, xl: 6 }}>
-              <Card sx={{ height: "100%" }}>
+        <>
+          <Stack spacing={2.5}>
+            {ordersQuery.data.items.map((order) => (
+              <Card key={order.id}>
                 <CardContent sx={{ p: 3 }}>
                   <Stack spacing={2}>
                     <Stack
@@ -163,9 +158,9 @@ export function DealerOrdersPage() {
                       {order.lineItems.map((item) => (
                         <Stack
                           key={item.id}
-                          direction="row"
+                          direction={{ xs: "column", sm: "row" }}
                           justifyContent="space-between"
-                          spacing={2}
+                          spacing={0.5}
                         >
                           <Typography color="text.secondary">
                             {item.skuCode} · {item.skuName}
@@ -186,9 +181,15 @@ export function DealerOrdersPage() {
                   </Stack>
                 </CardContent>
               </Card>
-            </Grid>
-          ))}
-        </Grid>
+            ))}
+          </Stack>
+          <PaginationBar
+            page={ordersQuery.data.pagination.page}
+            totalPages={ordersQuery.data.pagination.totalPages}
+            totalItems={ordersQuery.data.pagination.totalItems}
+            onPageChange={setPage}
+          />
+        </>
       )}
     </Stack>
   );

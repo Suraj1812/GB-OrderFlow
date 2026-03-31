@@ -1,185 +1,198 @@
 import DownloadRoundedIcon from "@mui/icons-material/DownloadRounded";
 import SearchRoundedIcon from "@mui/icons-material/SearchRounded";
-import TaskAltRoundedIcon from "@mui/icons-material/TaskAltRounded";
 import {
   Box,
   Button,
   Card,
   CardContent,
+  Chip,
   Dialog,
   DialogActions,
   DialogContent,
   DialogTitle,
-  Grid,
   InputAdornment,
   Paper,
   Stack,
   Tab,
-  TableContainer,
-  Tabs,
   Table,
   TableBody,
   TableCell,
+  TableContainer,
   TableHead,
   TableRow,
+  Tabs,
   TextField,
   Typography,
 } from "@mui/material";
-import axios from "axios";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { startTransition, useDeferredValue, useEffect, useMemo, useState } from "react";
 import toast from "react-hot-toast";
 
-import type { ExportPayload, Order } from "../../shared/contracts";
+import type {
+  ExportResult,
+  Order,
+  OrderListQuery,
+  PaginatedOrdersResponse,
+} from "../../shared/contracts";
 import { approveOrderSchema } from "../../shared/contracts";
-import { apiClient } from "../api/client";
-import { useApiQuery } from "../hooks/useApiQuery";
-import { downloadTextFile } from "../lib/download";
+import { apiClient, getApiErrorMessage } from "../api/client";
+import { queryKeys } from "../api/query-keys";
+import { triggerFileDownload } from "../lib/download";
 import { formatCurrency, formatDateTime } from "../lib/format";
 import { EmptyState } from "../ui/EmptyState";
+import { LoadingPanel } from "../ui/LoadingPanel";
 import { PageHeader } from "../ui/PageHeader";
+import { PaginationBar } from "../ui/PaginationBar";
 import { StatusChip } from "../ui/StatusChip";
 
 type OrderTab = "pending" | "approved" | "rejected";
-const PAGE_SIZE = 10;
 
-function isToday(value: string | null) {
-  if (!value) {
-    return false;
+function ExportStatusBadge({ status }: { status: Order["exportStatus"] }) {
+  if (status === "completed") {
+    return <Chip size="small" color="success" label="CSV ready" />;
   }
 
-  const now = new Date();
-  const date = new Date(value);
+  if (status === "failed") {
+    return <Chip size="small" color="error" label="CSV failed" />;
+  }
 
-  return (
-    now.getUTCFullYear() === date.getUTCFullYear() &&
-    now.getUTCMonth() === date.getUTCMonth() &&
-    now.getUTCDate() === date.getUTCDate()
-  );
+  if (status === "processing") {
+    return <Chip size="small" color="warning" label="CSV processing" />;
+  }
+
+  return <Chip size="small" color="default" label="CSV pending" />;
+}
+
+async function waitForExport(orderId: string, orderNumber: string) {
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    if (attempt > 0) {
+      await new Promise((resolve) => window.setTimeout(resolve, 1_200));
+    }
+
+    const response = await apiClient.get<ExportResult>(`/ho/orders/${orderId}/export`);
+
+    if (response.data.downloadUrl) {
+      triggerFileDownload(response.data.downloadUrl);
+      toast.success(`ERP CSV ready for ${orderNumber}.`);
+      return;
+    }
+  }
+
+  toast.success(`Order ${orderNumber} approved. CSV generation is still running.`);
 }
 
 export function HeadOfficeOrdersPage() {
+  const queryClient = useQueryClient();
   const [tab, setTab] = useState<OrderTab>("pending");
-  const [search, setSearch] = useState("");
+  const [searchInput, setSearchInput] = useState("");
+  const [page, setPage] = useState(1);
   const [discountDrafts, setDiscountDrafts] = useState<Record<string, string>>({});
   const [rejectingOrder, setRejectingOrder] = useState<Order | null>(null);
   const [rejectRemarks, setRejectRemarks] = useState("");
-  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
-  const deferredSearch = useDeferredValue(search);
-
-  const ordersQuery = useApiQuery(
-    async (signal) => {
-      const response = await apiClient.get<Order[]>("/ho/orders", { signal });
-      return response.data;
-    },
-    [],
-  );
-
-  const orders = ordersQuery.data ?? [];
-
-  const visibleOrders = useMemo(() => {
-    const query = deferredSearch.trim().toLowerCase();
-
-    return orders.filter((order) => {
-      const matchesTab =
-        tab === "approved"
-          ? order.status === "approved" && isToday(order.approvedAt)
-          : order.status === tab;
-
-      const matchesQuery =
-        !query ||
-        order.orderNumber.toLowerCase().includes(query) ||
-        order.dealerName.toLowerCase().includes(query) ||
-        order.lineItems.some(
-          (item) =>
-            item.skuCode.toLowerCase().includes(query) ||
-            item.skuName.toLowerCase().includes(query),
-        );
-
-      return matchesTab && matchesQuery;
-    });
-  }, [deferredSearch, orders, tab]);
-
-  const renderedOrders = useMemo(
-    () => visibleOrders.slice(0, visibleCount),
-    [visibleCount, visibleOrders],
-  );
+  const deferredSearch = useDeferredValue(searchInput);
 
   useEffect(() => {
-    setVisibleCount(PAGE_SIZE);
+    setPage(1);
   }, [deferredSearch, tab]);
 
-  async function approveOrder(order: Order) {
-    const parsed = approveOrderSchema.safeParse({
-      discountPct: discountDrafts[order.id] ?? order.discountPct ?? "",
-    });
+  const queryState: OrderListQuery = {
+    page,
+    pageSize: 8,
+    search: deferredSearch.trim(),
+    status: tab,
+  };
 
-    if (!parsed.success) {
-      toast.error(parsed.error.issues[0]?.message ?? "Enter a valid discount.");
-      return;
-    }
-
-    try {
-      const response = await apiClient.post<ExportPayload>(
-        `/ho/orders/${order.id}/approve`,
-        parsed.data,
-      );
-
-      downloadTextFile(response.data.filename, response.data.csv);
-      toast.success(`Approved ${order.orderNumber} and downloaded ERP CSV.`);
-      ordersQuery.refresh();
-    } catch (error) {
-      if (axios.isAxiosError(error)) {
-        toast.error(error.response?.data?.message ?? "Approval failed.");
-      } else {
-        toast.error("Approval failed.");
-      }
-    }
-  }
-
-  async function rejectOrder() {
-    if (!rejectingOrder) {
-      return;
-    }
-
-    try {
-      await apiClient.post(`/ho/orders/${rejectingOrder.id}/reject`, {
-        remarks: rejectRemarks.trim() || undefined,
+  const ordersQuery = useQuery({
+    queryKey: queryKeys.headOfficeOrders(queryState),
+    queryFn: async () => {
+      const response = await apiClient.get<PaginatedOrdersResponse>("/ho/orders", {
+        params: queryState,
       });
-      toast.success(`${rejectingOrder.orderNumber} rejected.`);
+      return response.data;
+    },
+    placeholderData: keepPreviousData,
+  });
+
+  const approveMutation = useMutation({
+    mutationFn: async ({
+      orderId,
+      discountPct,
+    }: {
+      orderId: string;
+      discountPct: number;
+      orderNumber: string;
+    }) => {
+      const response = await apiClient.post<ExportResult>(`/ho/orders/${orderId}/approve`, {
+        discountPct,
+      });
+      return response.data;
+    },
+    onSuccess: (result, variables) => {
+      void queryClient.invalidateQueries({ queryKey: ["head-office-orders"] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.dashboardSummary });
+
+      if (result.downloadUrl) {
+        triggerFileDownload(result.downloadUrl);
+        toast.success("Order approved and ERP CSV is ready.");
+        return;
+      }
+
+      void waitForExport(variables.orderId, variables.orderNumber).catch((error) => {
+        toast.error(getApiErrorMessage(error, "CSV generation is still pending."));
+      });
+    },
+    onError: (error) => {
+      toast.error(getApiErrorMessage(error, "Approval failed."));
+    },
+  });
+
+  const rejectMutation = useMutation({
+    mutationFn: async ({ orderId, remarks }: { orderId: string; remarks?: string }) => {
+      await apiClient.post(`/ho/orders/${orderId}/reject`, {
+        remarks,
+      });
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["head-office-orders"] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.dashboardSummary });
+      toast.success("Order rejected.");
       setRejectingOrder(null);
       setRejectRemarks("");
-      ordersQuery.refresh();
-    } catch (error) {
-      if (axios.isAxiosError(error)) {
-        toast.error(error.response?.data?.message ?? "Rejection failed.");
-      } else {
-        toast.error("Rejection failed.");
-      }
-    }
-  }
+    },
+    onError: (error) => {
+      toast.error(getApiErrorMessage(error, "Rejection failed."));
+    },
+  });
+
+  const reviewOrders = useMemo(() => ordersQuery.data?.items ?? [], [ordersQuery.data]);
 
   async function downloadExport(order: Order) {
     try {
-      const response = await apiClient.get<string>(`/ho/orders/${order.id}/export`, {
-        responseType: "text" as const,
-      });
-      downloadTextFile(`import-sales-bill-${order.orderNumber}.csv`, response.data);
-    } catch {
-      toast.error("Unable to download export file.");
+      const response = await apiClient.get<ExportResult>(`/ho/orders/${order.id}/export`);
+
+      if (response.data.downloadUrl) {
+        triggerFileDownload(response.data.downloadUrl);
+        return;
+      }
+
+      toast.success("CSV generation has started. We will keep checking for completion.");
+      await waitForExport(order.id, order.orderNumber);
+    } catch (error) {
+      toast.error(getApiErrorMessage(error, "Unable to prepare the export."));
     }
   }
 
-  if (ordersQuery.loading) {
-    return <Typography color="text.secondary">Loading orders...</Typography>;
+  if (ordersQuery.isPending) {
+    return <LoadingPanel rows={5} />;
   }
 
-  if (!ordersQuery.data) {
+  if (ordersQuery.isError || !ordersQuery.data) {
     return (
       <EmptyState
         title="Order queue unavailable"
-        description={ordersQuery.error ?? "We could not load the queue."}
+        description={getApiErrorMessage(ordersQuery.error, "We could not load the queue.")}
         actionLabel="Reload"
-        onAction={ordersQuery.refresh}
+        onAction={() => void ordersQuery.refetch()}
       />
     );
   }
@@ -189,28 +202,26 @@ export function HeadOfficeOrdersPage() {
       <PageHeader
         eyebrow="Order Queue"
         title="Approve, reject, and export"
-        description="Every pending order includes full line detail, a Head Office-only discount field, live net preview, and direct ERP CSV generation."
+        description="Review each line item, control discounting at Head Office only, and generate deterministic ERP-safe CSV files."
       />
 
       <Paper sx={{ p: 2.5 }}>
         <Stack spacing={2}>
           <Tabs
             value={tab}
-            onChange={(_event, value: OrderTab) =>
-              startTransition(() => setTab(value))
-            }
+            onChange={(_event, value: OrderTab) => startTransition(() => setTab(value))}
           >
             <Tab label="Pending" value="pending" />
-            <Tab label="Approved Today" value="approved" />
+            <Tab label="Approved" value="approved" />
             <Tab label="Rejected" value="rejected" />
           </Tabs>
           <TextField
             fullWidth
             placeholder="Search order number, dealer, SKU code, or item name"
-            value={search}
+            value={searchInput}
             onChange={(event) => {
-              const nextValue = event.target.value;
-              startTransition(() => setSearch(nextValue));
+              const value = event.target.value;
+              startTransition(() => setSearchInput(value));
             }}
             InputProps={{
               startAdornment: (
@@ -220,31 +231,27 @@ export function HeadOfficeOrdersPage() {
               ),
             }}
           />
-          <Typography color="text.secondary" variant="body2">
-            Showing {Math.min(renderedOrders.length, visibleOrders.length)} of{" "}
-            {visibleOrders.length} matching orders
-          </Typography>
         </Stack>
       </Paper>
 
-      {visibleOrders.length === 0 ? (
+      {reviewOrders.length === 0 ? (
         <EmptyState
           title="Nothing to review here"
-          description="This queue is currently empty for the selected tab and search criteria."
+          description="The queue is empty for the current tab and search criteria."
         />
       ) : (
-        <Grid container spacing={3}>
-          {renderedOrders.map((order) => {
-            const rawDiscount = discountDrafts[order.id] ?? String(order.discountPct ?? "");
-            const numericDiscount = Number(rawDiscount);
-            const previewNet =
-              Number.isFinite(numericDiscount) && rawDiscount !== ""
-                ? order.grossAmount * (1 - numericDiscount / 100)
-                : order.netAmount;
+        <>
+          <Stack spacing={3}>
+            {reviewOrders.map((order) => {
+              const draftValue = discountDrafts[order.id] ?? String(order.discountPct ?? "");
+              const parsedDiscount = Number(draftValue);
+              const previewNet =
+                draftValue !== "" && Number.isFinite(parsedDiscount)
+                  ? order.grossAmount * (1 - parsedDiscount / 100)
+                  : order.netAmount;
 
-            return (
-              <Grid key={order.id} size={{ xs: 12 }}>
-                <Card>
+              return (
+                <Card key={order.id}>
                   <CardContent sx={{ p: 3 }}>
                     <Stack spacing={2.5}>
                       <Stack
@@ -252,13 +259,18 @@ export function HeadOfficeOrdersPage() {
                         justifyContent="space-between"
                         spacing={1.5}
                       >
-                        <Stack spacing={0.5}>
+                        <Stack spacing={0.75}>
                           <Typography variant="h4">{order.orderNumber}</Typography>
                           <Typography color="text.secondary">
                             {order.dealerName} · {order.dealerCode} · {formatDateTime(order.createdAt)}
                           </Typography>
                         </Stack>
-                        <StatusChip status={order.status} />
+                        <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                          <StatusChip status={order.status} />
+                          {order.status === "approved" ? (
+                            <ExportStatusBadge status={order.exportStatus} />
+                          ) : null}
+                        </Stack>
                       </Stack>
 
                       <Box sx={{ display: { xs: "block", md: "none" } }}>
@@ -312,137 +324,143 @@ export function HeadOfficeOrdersPage() {
                       </TableContainer>
 
                       <Paper sx={{ p: 2.5, bgcolor: "rgba(26,26,46,0.03)" }}>
-                        <Grid container spacing={2}>
-                          <Grid size={{ xs: 12, md: 3 }}>
-                            <Typography color="text.secondary">Gross Amount</Typography>
-                            <Typography mt={0.5} fontWeight={800}>
-                              {formatCurrency(order.grossAmount)}
-                            </Typography>
-                          </Grid>
-                          <Grid size={{ xs: 12, md: 3 }}>
-                            <Typography color="text.secondary">Total Quantity</Typography>
-                            <Typography mt={0.5} fontWeight={800}>
-                              {order.totalQty}
-                            </Typography>
-                          </Grid>
-                          <Grid size={{ xs: 12, md: 3 }}>
-                            <Typography color="text.secondary">Discount %</Typography>
-                            {order.status === "pending" ? (
+                        <Stack spacing={2}>
+                          <Stack
+                            direction={{ xs: "column", md: "row" }}
+                            spacing={2}
+                            justifyContent="space-between"
+                          >
+                            <Box>
+                              <Typography color="text.secondary">Gross Amount</Typography>
+                              <Typography mt={0.5} fontWeight={800}>
+                                {formatCurrency(order.grossAmount)}
+                              </Typography>
+                            </Box>
+                            <Box>
+                              <Typography color="text.secondary">Net Preview</Typography>
+                              <Typography mt={0.5} fontWeight={800}>
+                                {formatCurrency(previewNet)}
+                              </Typography>
+                            </Box>
+                          </Stack>
+
+                          {order.status === "pending" ? (
+                            <Stack direction={{ xs: "column", md: "row" }} spacing={1.5}>
                               <TextField
-                                size="small"
-                                sx={{ mt: 1, maxWidth: 180 }}
-                                value={rawDiscount}
+                                label="Discount %"
+                                type="number"
+                                value={draftValue}
                                 onChange={(event) =>
                                   setDiscountDrafts((current) => ({
                                     ...current,
-                                    [order.id]: event.target.value.replace(/[^\d.]/g, ""),
+                                    [order.id]: event.target.value,
                                   }))
                                 }
-                                placeholder="e.g. 8.5"
                               />
-                            ) : (
-                              <Typography mt={0.5} fontWeight={800}>
-                                {order.discountPct?.toFixed(2) ?? "Not applied"}
+                              <Button
+                                variant="contained"
+                                disabled={approveMutation.isPending}
+                                onClick={() => {
+                                  const parsed = approveOrderSchema.safeParse({
+                                    discountPct: draftValue || 0,
+                                  });
+
+                                  if (!parsed.success) {
+                                    toast.error(
+                                      parsed.error.issues[0]?.message ?? "Enter a valid discount.",
+                                    );
+                                    return;
+                                  }
+
+                                  approveMutation.mutate({
+                                    orderId: order.id,
+                                    discountPct: parsed.data.discountPct,
+                                    orderNumber: order.orderNumber,
+                                  });
+                                }}
+                              >
+                                Approve order
+                              </Button>
+                              <Button
+                                variant="outlined"
+                                color="inherit"
+                                onClick={() => setRejectingOrder(order)}
+                              >
+                                Reject order
+                              </Button>
+                            </Stack>
+                          ) : order.status === "approved" ? (
+                            <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5}>
+                              <Button
+                                variant="contained"
+                                startIcon={<DownloadRoundedIcon />}
+                                onClick={() => void downloadExport(order)}
+                              >
+                                Download CSV
+                              </Button>
+                              <Typography color="text.secondary" alignSelf="center">
+                                Export status: {order.exportStatus ?? "pending"}
                               </Typography>
-                            )}
-                          </Grid>
-                          <Grid size={{ xs: 12, md: 3 }}>
-                            <Typography color="text.secondary">Net Amount</Typography>
-                            <Typography mt={0.5} fontWeight={800}>
-                              {formatCurrency(previewNet)}
-                            </Typography>
-                          </Grid>
-                        </Grid>
+                            </Stack>
+                          ) : order.remarks ? (
+                            <Typography color="text.secondary">{order.remarks}</Typography>
+                          ) : null}
+                        </Stack>
                       </Paper>
-
-                      {order.remarks ? (
-                        <Typography color="text.secondary">
-                          Remarks: {order.remarks}
-                        </Typography>
-                      ) : null}
-
-                      <Stack
-                        direction={{ xs: "column", sm: "row" }}
-                        spacing={1.5}
-                        justifyContent="flex-end"
-                      >
-                        {order.status === "pending" ? (
-                          <>
-                            <Button
-                              variant="outlined"
-                              color="error"
-                              onClick={() => {
-                                setRejectingOrder(order);
-                                setRejectRemarks(order.remarks ?? "");
-                              }}
-                            >
-                              Reject
-                            </Button>
-                            <Button
-                              variant="contained"
-                              startIcon={<TaskAltRoundedIcon />}
-                              onClick={() => approveOrder(order)}
-                            >
-                              Approve and export CSV
-                            </Button>
-                          </>
-                        ) : (
-                          <Button
-                            variant="outlined"
-                            startIcon={<DownloadRoundedIcon />}
-                            onClick={() => downloadExport(order)}
-                          >
-                            Download export
-                          </Button>
-                        )}
-                      </Stack>
                     </Stack>
                   </CardContent>
                 </Card>
-              </Grid>
-            );
-          })}
-        </Grid>
+              );
+            })}
+          </Stack>
+          <PaginationBar
+            page={ordersQuery.data.pagination.page}
+            totalPages={ordersQuery.data.pagination.totalPages}
+            totalItems={ordersQuery.data.pagination.totalItems}
+            onPageChange={setPage}
+          />
+        </>
       )}
-      {renderedOrders.length < visibleOrders.length ? (
-        <Stack alignItems="center">
-          <Button
-            variant="outlined"
-            color="inherit"
-            onClick={() =>
-              setVisibleCount((current) =>
-                Math.min(current + PAGE_SIZE, visibleOrders.length),
-              )
-            }
-          >
-            Load more orders
-          </Button>
-        </Stack>
-      ) : null}
 
-      <Dialog open={Boolean(rejectingOrder)} onClose={() => setRejectingOrder(null)} fullWidth maxWidth="sm">
+      <Dialog
+        open={Boolean(rejectingOrder)}
+        onClose={() => setRejectingOrder(null)}
+        fullWidth
+        maxWidth="sm"
+      >
         <DialogTitle>Reject order</DialogTitle>
         <DialogContent>
-          <Stack spacing={2} mt={1}>
+          <Stack spacing={2} mt={0.5}>
             <Typography color="text.secondary">
-              Add an optional note for the dealer or internal team before rejecting{" "}
-              {rejectingOrder?.orderNumber}.
+              Add a reason so the dealer can understand why the order was rejected.
             </Typography>
             <TextField
+              label="Remarks"
               multiline
               minRows={4}
-              label="Remarks"
               value={rejectRemarks}
               onChange={(event) => setRejectRemarks(event.target.value)}
             />
           </Stack>
         </DialogContent>
-        <DialogActions sx={{ px: 3, pb: 3 }}>
-          <Button color="inherit" onClick={() => setRejectingOrder(null)}>
-            Cancel
-          </Button>
-          <Button color="error" variant="contained" onClick={rejectOrder}>
-            Reject order
+        <DialogActions>
+          <Button onClick={() => setRejectingOrder(null)}>Cancel</Button>
+          <Button
+            color="error"
+            variant="contained"
+            disabled={!rejectingOrder || rejectMutation.isPending}
+            onClick={() => {
+              if (!rejectingOrder) {
+                return;
+              }
+
+              rejectMutation.mutate({
+                orderId: rejectingOrder.id,
+                remarks: rejectRemarks.trim() || undefined,
+              });
+            }}
+          >
+            Confirm rejection
           </Button>
         </DialogActions>
       </Dialog>

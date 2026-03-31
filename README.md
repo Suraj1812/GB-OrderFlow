@@ -1,46 +1,71 @@
-# Goel Brothers OrderFlow
+# GB OrderFlow
 
-Production-style full-stack implementation of the Goel Brothers dealer ordering and Head Office approval portal described in the March 2026 developer brief.
+Enterprise-grade dealer ordering and Head Office approval workflow for Goel Brothers.
 
 ## Stack
 
-- `React + TypeScript + Vite`
-- `React Router DOM`
-- `Axios`
-- `Zod`
-- `MUI`
-- `react-hot-toast`
-- `Express + TypeScript`
-- `JSON file persistence with seeded data`
+- React 18 + TypeScript + Vite
+- React Router DOM
+- React Query
+- Axios
+- React Hook Form + Zod
+- MUI
+- Express 5 + TypeScript
+- Prisma ORM + PostgreSQL
+- Pino logging
+- Vitest + Supertest
 
-## What is included
+## Production upgrades in this version
 
-- Dealer login, mobile-first SKU catalogue, cart flow, order submission, and order history
-- Separate Head Office login, dashboard, approval queue, rejection flow, and instant CSV export
-- Dealer master and SKU master management
-- Role-based authentication and protected routes
-- Seeded local data for realistic demo use
-- ERP CSV generation based on the field structure available in the brief
+- Refresh token + access token authentication with HTTP-only cookies
+- Role-based access control for Dealer and Head Office flows
+- Login brute-force protection, rate limiting, audit logs, and bcrypt password hashing
+- Forgot-password OTP flow with server-side invalidation
+- Modular backend with controllers, services, repositories, centralized errors, and request validation
+- PostgreSQL schema for dealers, users, sessions, SKUs, orders, order items, exports, and audit logs
+- Deterministic ERP-safe CSV generation with export history and signed download URLs
+- React Query caching, route lazy loading, virtualized SKU rendering, mobile-safe pagination, and responsive admin screens
+- CI workflow, Docker support, Prisma migrations, and deployment config for Vercel + Railway
 
-## Local run
+## Local development
+
+1. Install dependencies
 
 ```bash
 npm install --legacy-peer-deps --cache /tmp/gb-orderflow-npm-cache
+```
+
+2. Copy environment variables
+
+```bash
+cp .env.example .env
+```
+
+3. Start PostgreSQL locally, then run migrations and seed data
+
+```bash
+npm run db:migrate
+npm run db:seed
+```
+
+4. Start the app
+
+```bash
 npm run dev
 ```
 
-Frontend: `http://localhost:5173`
+Frontend: `http://127.0.0.1:5173`
 
-API: `http://localhost:4000`
+API: `http://127.0.0.1:4000`
 
 ## Production build
 
 ```bash
 npm run build
-npm start
+npm run start
 ```
 
-The production server serves the built frontend from `dist/` and the API from the same Express process.
+The production server serves the compiled API from `dist-server/` and, when present, the Vite frontend build from `dist/`.
 
 ## Demo credentials
 
@@ -56,24 +81,39 @@ Dealers:
 - Dealer code: `GB-D032`
 - Password for active dealers: `dealer123`
 
-## Data storage
+## Key scripts
 
-- Runtime data is stored in `server/storage/db.json`
-- The file is auto-seeded on first run
-- Delete that file if you want to reset the local environment back to the seed state
+- `npm run dev` - frontend + backend development
+- `npm run typecheck` - frontend and backend TypeScript validation
+- `npm run lint` - ESLint
+- `npm run test` - unit and integration tests
+- `npm run build` - full production build
+- `npm run db:migrate` - apply Prisma migrations
+- `npm run db:seed` - seed database data
 
-## Important implementation note
+## Deployment
 
-The exact PantherTech ERP Import Sales Bill column specification was not included in the PDF itself. The current CSV export uses the fields explicitly listed in the brief:
+### Frontend on Vercel
 
-- `PARTY_CODE`
-- `ORDER_DATE`
-- `SERIES`
-- `ITEM_CODE`
-- `QTY`
-- `RATE`
-- `DISC_PCT`
-- `NET_AMOUNT`
+- `vercel.json` builds the Vite client from `dist/`
+- Set `VITE_API_BASE_URL` to your backend origin, for example `https://gb-orderflow-api.up.railway.app/api`
 
-When the final ERP import layout is provided, update the exporter in `server/csv.ts` and, if needed, the order payload mapping in `server/routes.ts`.
+### Backend on Railway
 
+- `railway.json` starts the Express API from `dist-server/server/index.js`
+- Required environment variables are listed in `.env.example`
+- Set `COOKIE_SECURE=true` and `COOKIE_SAME_SITE=none` when frontend and backend are on different domains
+- Set `API_ORIGIN` to the backend public origin so signed CSV download links are correct
+
+## Docker
+
+- `Dockerfile` builds the combined full-stack app
+- `Dockerfile.backend` builds the API service only
+- `Dockerfile.frontend` builds the static frontend only
+- `docker-compose.yml` brings up Postgres, API, and frontend locally
+
+## Notes
+
+- The CSV format is deterministic, UTF-8 BOM encoded, CRLF separated, and validated before export.
+- Export generation is idempotent per order and stored in `ExportHistory`.
+- Dealer-facing endpoints intentionally never return internal rate or discount values.

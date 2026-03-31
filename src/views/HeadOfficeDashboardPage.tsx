@@ -13,86 +13,107 @@ import {
   Stack,
   Typography,
 } from "@mui/material";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { Link as RouterLink } from "react-router-dom";
 
-import type { DashboardSummary, Order } from "../../shared/contracts";
-import { apiClient } from "../api/client";
-import { useApiQuery } from "../hooks/useApiQuery";
+import type { DashboardSummary, PaginatedOrdersResponse } from "../../shared/contracts";
+import { apiClient, getApiErrorMessage } from "../api/client";
+import { queryKeys } from "../api/query-keys";
 import { formatCurrency, formatDateTime } from "../lib/format";
 import { EmptyState } from "../ui/EmptyState";
+import { LoadingPanel } from "../ui/LoadingPanel";
 import { MetricCard } from "../ui/MetricCard";
 import { PageHeader } from "../ui/PageHeader";
 import { StatusChip } from "../ui/StatusChip";
 
-function sameUtcDay(timestamp: string | null) {
-  if (!timestamp) {
-    return false;
-  }
-
-  const now = new Date();
-  const date = new Date(timestamp);
-
-  return (
-    now.getUTCFullYear() === date.getUTCFullYear() &&
-    now.getUTCMonth() === date.getUTCMonth() &&
-    now.getUTCDate() === date.getUTCDate()
-  );
-}
-
 export function HeadOfficeDashboardPage() {
-  const summaryQuery = useApiQuery(
-    async (signal) => {
-      const response = await apiClient.get<DashboardSummary>("/ho/dashboard", { signal });
+  const summaryQuery = useQuery({
+    queryKey: queryKeys.dashboardSummary,
+    queryFn: async () => {
+      const response = await apiClient.get<DashboardSummary>("/ho/dashboard");
       return response.data;
     },
-    [],
-  );
+  });
 
-  const ordersQuery = useApiQuery(
-    async (signal) => {
-      const response = await apiClient.get<Order[]>("/ho/orders", { signal });
+  const pendingOrdersQuery = useQuery({
+    queryKey: queryKeys.headOfficeOrders({
+      page: 1,
+      pageSize: 4,
+      search: "",
+      status: "pending",
+    }),
+    queryFn: async () => {
+      const response = await apiClient.get<PaginatedOrdersResponse>("/ho/orders", {
+        params: {
+          page: 1,
+          pageSize: 4,
+          search: "",
+          status: "pending",
+        },
+      });
       return response.data;
     },
-    [],
-  );
+    placeholderData: keepPreviousData,
+  });
 
-  if (summaryQuery.loading || ordersQuery.loading) {
-    return <Typography color="text.secondary">Loading dashboard...</Typography>;
+  const approvedOrdersQuery = useQuery({
+    queryKey: queryKeys.headOfficeOrders({
+      page: 1,
+      pageSize: 4,
+      search: "",
+      status: "approved",
+    }),
+    queryFn: async () => {
+      const response = await apiClient.get<PaginatedOrdersResponse>("/ho/orders", {
+        params: {
+          page: 1,
+          pageSize: 4,
+          search: "",
+          status: "approved",
+        },
+      });
+      return response.data;
+    },
+    placeholderData: keepPreviousData,
+  });
+
+  if (summaryQuery.isPending || pendingOrdersQuery.isPending || approvedOrdersQuery.isPending) {
+    return <LoadingPanel rows={6} />;
   }
 
-  if (!summaryQuery.data || !ordersQuery.data) {
+  if (
+    summaryQuery.isError ||
+    pendingOrdersQuery.isError ||
+    approvedOrdersQuery.isError ||
+    !summaryQuery.data ||
+    !pendingOrdersQuery.data ||
+    !approvedOrdersQuery.data
+  ) {
     return (
       <EmptyState
         title="Dashboard unavailable"
-        description={
-          summaryQuery.error ?? ordersQuery.error ?? "The dashboard could not be loaded."
-        }
+        description={getApiErrorMessage(
+          summaryQuery.error ?? pendingOrdersQuery.error ?? approvedOrdersQuery.error,
+          "The dashboard could not be loaded.",
+        )}
         actionLabel="Reload"
         onAction={() => {
-          summaryQuery.refresh();
-          ordersQuery.refresh();
+          void summaryQuery.refetch();
+          void pendingOrdersQuery.refetch();
+          void approvedOrdersQuery.refetch();
         }}
       />
     );
   }
-
-  const pendingOrders = ordersQuery.data.filter((order) => order.status === "pending").slice(0, 4);
-  const approvedToday = ordersQuery.data.filter(
-    (order) => order.status === "approved" && sameUtcDay(order.approvedAt),
-  );
 
   return (
     <Stack spacing={3.5}>
       <PageHeader
         eyebrow="Head Office Dashboard"
         title="Operational control at a glance"
-        description="Monitor pending approvals, same-day approved value, dealer coverage, and live operational activity without leaving the workspace."
+        description="Monitor pending approvals, today’s cleared value, dealer coverage, and recent activity from one secure control room."
         actions={
-          <Button
-            component={RouterLink}
-            to="/head-office/orders"
-            variant="contained"
-          >
+          <Button component={RouterLink} to="/head-office/orders" variant="contained">
             Open order queue
           </Button>
         }
@@ -111,7 +132,7 @@ export function HeadOfficeDashboardPage() {
           <MetricCard
             label="Approved Today"
             value={`${summaryQuery.data.approvedTodayCount}`}
-            helper="Orders approved on the current UTC business day"
+            helper="Orders approved during the current UTC day"
             icon={CheckCircleRoundedIcon}
           />
         </Grid>
@@ -139,13 +160,13 @@ export function HeadOfficeDashboardPage() {
             <CardContent sx={{ p: 3 }}>
               <Stack spacing={2.5}>
                 <Typography variant="h4">Pending review right now</Typography>
-                {pendingOrders.length === 0 ? (
+                {pendingOrdersQuery.data.items.length === 0 ? (
                   <Typography color="text.secondary">
                     No pending orders at the moment.
                   </Typography>
                 ) : (
                   <List disablePadding>
-                    {pendingOrders.map((order) => (
+                    {pendingOrdersQuery.data.items.map((order) => (
                       <ListItem
                         key={order.id}
                         disableGutters
@@ -172,13 +193,13 @@ export function HeadOfficeDashboardPage() {
           <Card sx={{ height: "100%" }}>
             <CardContent sx={{ p: 3 }}>
               <Stack spacing={2.5}>
-                <Typography variant="h4">Approved today</Typography>
-                {approvedToday.length === 0 ? (
+                <Typography variant="h4">Recently approved</Typography>
+                {approvedOrdersQuery.data.items.length === 0 ? (
                   <Typography color="text.secondary">
-                    No orders have been approved yet today.
+                    No approved orders available yet.
                   </Typography>
                 ) : (
-                  approvedToday.map((order) => (
+                  approvedOrdersQuery.data.items.map((order) => (
                     <Stack
                       key={order.id}
                       spacing={0.5}
@@ -187,7 +208,7 @@ export function HeadOfficeDashboardPage() {
                     >
                       <Typography fontWeight={800}>{order.orderNumber}</Typography>
                       <Typography color="text.secondary">
-                        {order.dealerName} · Discount {order.discountPct?.toFixed(2)}%
+                        {order.dealerName} · Discount {order.discountPct?.toFixed(2) ?? "0.00"}%
                       </Typography>
                       <Typography color="text.secondary">
                         Net value {formatCurrency(order.netAmount)}
@@ -203,4 +224,3 @@ export function HeadOfficeDashboardPage() {
     </Stack>
   );
 }
-

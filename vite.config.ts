@@ -15,11 +15,7 @@ export default defineConfig({
             return "mui";
           }
 
-          if (id.includes("react") || id.includes("scheduler")) {
-            return "react";
-          }
-
-          if (id.includes("axios") || id.includes("zod")) {
+          if (id.includes("@tanstack") || id.includes("axios") || id.includes("zod")) {
             return "data";
           }
 

@@ -11,50 +11,41 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
-import axios from "axios";
+import { zodResolver } from "@hookform/resolvers/zod";
 import { useState } from "react";
+import { useForm } from "react-hook-form";
 import toast from "react-hot-toast";
 import { Link as RouterLink, Navigate, useNavigate } from "react-router-dom";
 
+import type { HeadOfficeLoginInput } from "../../shared/contracts";
 import { headOfficeLoginSchema } from "../../shared/contracts";
+import { getApiErrorMessage } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
+import { PasswordResetDialog } from "../ui/PasswordResetDialog";
 
 export function HeadOfficeLoginPage() {
   const navigate = useNavigate();
   const { session, loginHeadOffice, getDefaultRoute } = useAuth();
-  const [form, setForm] = useState({
-    username: "admin",
-    password: "GB@2026!",
+  const [resetOpen, setResetOpen] = useState(false);
+  const form = useForm<HeadOfficeLoginInput>({
+    resolver: zodResolver(headOfficeLoginSchema),
+    defaultValues: {
+      username: "admin",
+      password: "GB@2026!",
+    },
   });
-  const [submitting, setSubmitting] = useState(false);
 
   if (session) {
     return <Navigate to={getDefaultRoute(session.role)} replace />;
   }
 
-  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const parsed = headOfficeLoginSchema.safeParse(form);
-
-    if (!parsed.success) {
-      toast.error(parsed.error.issues[0]?.message ?? "Enter valid credentials.");
-      return;
-    }
-
-    setSubmitting(true);
-
+  async function handleSubmit(values: HeadOfficeLoginInput) {
     try {
-      await loginHeadOffice(parsed.data);
+      await loginHeadOffice(values);
       toast.success("Head Office workspace ready.");
       navigate("/head-office/dashboard");
     } catch (error) {
-      if (axios.isAxiosError(error)) {
-        toast.error(error.response?.data?.message ?? "Sign-in failed.");
-      } else {
-        toast.error("Sign-in failed.");
-      }
-    } finally {
-      setSubmitting(false);
+      toast.error(getApiErrorMessage(error, "Sign-in failed."));
     }
   }
 
@@ -66,13 +57,12 @@ export function HeadOfficeLoginPage() {
             <CardContent sx={{ position: "relative", p: { xs: 3, md: 5 } }}>
               <Stack spacing={2}>
                 <Typography variant="overline">Head Office Sign-In</Typography>
-                <Typography variant="h2">Approve orders and push them toward ERP import.</Typography>
+                <Typography variant="h2">Approve orders and govern the ERP flow.</Typography>
                 <Typography color="text.secondary">
-                  Pending queue oversight, exclusive discount entry, CSV export,
-                  approved log tracking, and dealer plus SKU master management in one secure workspace.
+                  Secure approval rights, guarded discounts, clean auditability, and reliable CSV export in one operational workspace.
                 </Typography>
                 <Alert severity="warning" sx={{ mt: 2, borderRadius: 4 }}>
-                  Discount visibility and approval rights are restricted to Head Office only.
+                  Dealer accounts never see rates or discount controls.
                 </Alert>
               </Stack>
             </CardContent>
@@ -80,7 +70,11 @@ export function HeadOfficeLoginPage() {
 
           <Card sx={{ width: "100%", maxWidth: 470 }}>
             <CardContent sx={{ p: { xs: 3, md: 4 } }}>
-              <Stack component="form" spacing={2.5} onSubmit={handleSubmit}>
+              <Stack
+                component="form"
+                spacing={2.5}
+                onSubmit={form.handleSubmit((values) => void handleSubmit(values))}
+              >
                 <Box>
                   <Typography variant="h4">Secure access</Typography>
                   <Typography mt={0.75} color="text.secondary">
@@ -89,33 +83,30 @@ export function HeadOfficeLoginPage() {
                 </Box>
                 <TextField
                   label="Username"
-                  value={form.username}
-                  onChange={(event) =>
-                    setForm((current) => ({
-                      ...current,
-                      username: event.target.value,
-                    }))
-                  }
+                  autoComplete="username"
+                  {...form.register("username")}
+                  error={Boolean(form.formState.errors.username)}
+                  helperText={form.formState.errors.username?.message}
                 />
                 <TextField
                   label="Password"
                   type="password"
-                  value={form.password}
-                  onChange={(event) =>
-                    setForm((current) => ({
-                      ...current,
-                      password: event.target.value,
-                    }))
-                  }
+                  autoComplete="current-password"
+                  {...form.register("password")}
+                  error={Boolean(form.formState.errors.password)}
+                  helperText={form.formState.errors.password?.message}
                 />
                 <Button
                   type="submit"
                   size="large"
                   variant="contained"
-                  disabled={submitting}
+                  disabled={form.formState.isSubmitting}
                   endIcon={<ArrowForwardRoundedIcon />}
                 >
                   Enter Head Office portal
+                </Button>
+                <Button variant="text" color="inherit" onClick={() => setResetOpen(true)}>
+                  Forgot password?
                 </Button>
                 <Typography color="text.secondary" variant="body2">
                   Looking for dealer access?{" "}
@@ -128,7 +119,12 @@ export function HeadOfficeLoginPage() {
           </Card>
         </Stack>
       </Container>
+
+      <PasswordResetDialog
+        open={resetOpen}
+        onClose={() => setResetOpen(false)}
+        defaultIdentifier={form.watch("username")}
+      />
     </Box>
   );
 }
-

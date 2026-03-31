@@ -1,6 +1,7 @@
 import AddRoundedIcon from "@mui/icons-material/AddRounded";
 import EditRoundedIcon from "@mui/icons-material/EditRounded";
 import SearchRoundedIcon from "@mui/icons-material/SearchRounded";
+import { zodResolver } from "@hookform/resolvers/zod";
 import {
   Button,
   Chip,
@@ -8,34 +9,36 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
+  FormControlLabel,
   Grid,
   InputAdornment,
   Paper,
   Stack,
   Switch,
   Table,
-  TableContainer,
   TableBody,
   TableCell,
+  TableContainer,
   TableHead,
   TableRow,
   TextField,
   Typography,
 } from "@mui/material";
-import axios from "axios";
-import { startTransition, useDeferredValue, useMemo, useState } from "react";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { startTransition, useDeferredValue, useEffect, useState } from "react";
+import { useForm } from "react-hook-form";
 import toast from "react-hot-toast";
 
-import type { Dealer, UpsertDealerInput } from "../../shared/contracts";
+import type { Dealer, PaginatedDealersResponse, UpsertDealerInput } from "../../shared/contracts";
 import { upsertDealerSchema } from "../../shared/contracts";
-import { apiClient } from "../api/client";
-import { useApiQuery } from "../hooks/useApiQuery";
+import { apiClient, getApiErrorMessage } from "../api/client";
+import { queryKeys } from "../api/query-keys";
 import { EmptyState } from "../ui/EmptyState";
+import { LoadingPanel } from "../ui/LoadingPanel";
 import { PageHeader } from "../ui/PageHeader";
+import { PaginationBar } from "../ui/PaginationBar";
 
-type DealerFormState = UpsertDealerInput;
-
-const emptyDealerForm: DealerFormState = {
+const emptyDealerForm: UpsertDealerInput = {
   code: "",
   name: "",
   region: "",
@@ -47,101 +50,95 @@ const emptyDealerForm: DealerFormState = {
 };
 
 export function HeadOfficeDealersPage() {
-  const [search, setSearch] = useState("");
+  const queryClient = useQueryClient();
+  const [searchInput, setSearchInput] = useState("");
+  const [page, setPage] = useState(1);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingDealer, setEditingDealer] = useState<Dealer | null>(null);
-  const [form, setForm] = useState<DealerFormState>(emptyDealerForm);
-  const deferredSearch = useDeferredValue(search);
+  const deferredSearch = useDeferredValue(searchInput);
 
-  const dealersQuery = useApiQuery(
-    async (signal) => {
-      const response = await apiClient.get<Dealer[]>("/ho/dealers", { signal });
+  const form = useForm<UpsertDealerInput>({
+    resolver: zodResolver(upsertDealerSchema),
+    defaultValues: emptyDealerForm,
+  });
+
+  useEffect(() => {
+    setPage(1);
+  }, [deferredSearch]);
+
+  const dealersQuery = useQuery({
+    queryKey: queryKeys.dealers({
+      page,
+      pageSize: 10,
+      search: deferredSearch.trim(),
+    }),
+    queryFn: async () => {
+      const response = await apiClient.get<PaginatedDealersResponse>("/ho/dealers", {
+        params: {
+          page,
+          pageSize: 10,
+          search: deferredSearch.trim(),
+        },
+      });
       return response.data;
     },
-    [],
-  );
+    placeholderData: keepPreviousData,
+  });
 
-  const dealers = dealersQuery.data ?? [];
-
-  const filteredDealers = useMemo(() => {
-    const query = deferredSearch.trim().toLowerCase();
-
-    return dealers.filter((dealer) => {
-      if (!query) {
-        return true;
+  const saveDealerMutation = useMutation({
+    mutationFn: async (values: UpsertDealerInput) => {
+      if (editingDealer) {
+        await apiClient.put(`/ho/dealers/${editingDealer.id}`, values);
+        return "Dealer updated.";
       }
 
-      return (
-        dealer.code.toLowerCase().includes(query) ||
-        dealer.name.toLowerCase().includes(query) ||
-        dealer.region.toLowerCase().includes(query) ||
-        dealer.contactPerson.toLowerCase().includes(query)
-      );
-    });
-  }, [dealers, deferredSearch]);
+      await apiClient.post("/ho/dealers", values);
+      return "Dealer created.";
+    },
+    onSuccess: (message) => {
+      toast.success(message);
+      setDialogOpen(false);
+      setEditingDealer(null);
+      form.reset(emptyDealerForm);
+      void queryClient.invalidateQueries({ queryKey: ["dealers"] });
+    },
+    onError: (error) => {
+      toast.error(getApiErrorMessage(error, "Unable to save dealer."));
+    },
+  });
 
   function openCreateDialog() {
     setEditingDealer(null);
-    setForm(emptyDealerForm);
+    form.reset(emptyDealerForm);
     setDialogOpen(true);
   }
 
   function openEditDialog(dealer: Dealer) {
     setEditingDealer(dealer);
-    setForm({
+    form.reset({
       code: dealer.code,
       name: dealer.name,
       region: dealer.region,
       contactPerson: dealer.contactPerson,
       phone: dealer.phone,
-      email: dealer.email,
+      email: dealer.email ?? "",
       active: dealer.active,
       password: "",
     });
     setDialogOpen(true);
   }
 
-  async function saveDealer() {
-    const parsed = upsertDealerSchema.safeParse(form);
-
-    if (!parsed.success) {
-      toast.error(parsed.error.issues[0]?.message ?? "Enter a valid dealer record.");
-      return;
-    }
-
-    try {
-      if (editingDealer) {
-        await apiClient.put(`/ho/dealers/${editingDealer.id}`, parsed.data);
-        toast.success("Dealer updated.");
-      } else {
-        await apiClient.post("/ho/dealers", parsed.data);
-        toast.success("Dealer created.");
-      }
-
-      setDialogOpen(false);
-      setEditingDealer(null);
-      setForm(emptyDealerForm);
-      dealersQuery.refresh();
-    } catch (error) {
-      if (axios.isAxiosError(error)) {
-        toast.error(error.response?.data?.message ?? "Unable to save dealer.");
-      } else {
-        toast.error("Unable to save dealer.");
-      }
-    }
+  if (dealersQuery.isPending) {
+    return <LoadingPanel rows={5} />;
   }
 
-  if (dealersQuery.loading) {
-    return <Typography color="text.secondary">Loading dealers...</Typography>;
-  }
-
-  if (!dealersQuery.data) {
+  if (dealersQuery.isError || !dealersQuery.data) {
     return (
       <EmptyState
         title="Dealer master unavailable"
-        description={dealersQuery.error ?? "We could not load dealer records."}
+        description={getApiErrorMessage(dealersQuery.error, "We could not load dealer records.")}
         actionLabel="Reload"
-        onAction={dealersQuery.refresh}
+        onAction={() => void dealersQuery.refetch()}
       />
     );
   }
@@ -151,7 +148,7 @@ export function HeadOfficeDealersPage() {
       <PageHeader
         eyebrow="Dealer Master"
         title="Manage dealer access"
-        description="Create, update, or deactivate dealer accounts and control the login credentials used in the dealer portal."
+        description="Create, update, or deactivate dealer accounts and control the credentials used in the dealer portal."
         actions={
           <Button variant="contained" startIcon={<AddRoundedIcon />} onClick={openCreateDialog}>
             Add dealer
@@ -163,10 +160,10 @@ export function HeadOfficeDealersPage() {
         <TextField
           fullWidth
           placeholder="Search dealer code, name, region, or contact person"
-          value={search}
+          value={searchInput}
           onChange={(event) => {
-            const nextValue = event.target.value;
-            startTransition(() => setSearch(nextValue));
+            const value = event.target.value;
+            startTransition(() => setSearchInput(value));
           }}
           InputProps={{
             startAdornment: (
@@ -178,152 +175,171 @@ export function HeadOfficeDealersPage() {
         />
       </Paper>
 
-      {filteredDealers.length === 0 ? (
+      {dealersQuery.data.items.length === 0 ? (
         <EmptyState
           title="No dealer records found"
-          description="Adjust your search or create a new dealer account."
+          description="Adjust the search or create a new dealer account."
           actionLabel="Add dealer"
           onAction={openCreateDialog}
         />
       ) : (
-        <Paper sx={{ overflow: "hidden" }}>
-          <TableContainer sx={{ overflowX: "auto" }}>
-          <Table>
-            <TableHead>
-              <TableRow>
-                <TableCell>Dealer</TableCell>
-                <TableCell>Region</TableCell>
-                <TableCell>Contact</TableCell>
-                <TableCell>Status</TableCell>
-                <TableCell align="right">Action</TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {filteredDealers.map((dealer) => (
-                <TableRow key={dealer.id} hover>
-                  <TableCell>
-                    <Stack spacing={0.5}>
-                      <Typography fontWeight={800}>{dealer.name}</Typography>
-                      <Typography color="text.secondary">{dealer.code}</Typography>
-                    </Stack>
-                  </TableCell>
-                  <TableCell>{dealer.region}</TableCell>
-                  <TableCell>
-                    <Stack spacing={0.5}>
-                      <Typography>{dealer.contactPerson}</Typography>
-                      <Typography color="text.secondary">{dealer.phone}</Typography>
-                      <Typography color="text.secondary">{dealer.email || "No email"}</Typography>
-                    </Stack>
-                  </TableCell>
-                  <TableCell>
-                    <Chip
-                      label={dealer.active ? "Active" : "Inactive"}
-                      color={dealer.active ? "success" : "default"}
-                    />
-                  </TableCell>
-                  <TableCell align="right">
-                    <Button
-                      size="small"
-                      startIcon={<EditRoundedIcon />}
-                      onClick={() => openEditDialog(dealer)}
-                    >
-                      Edit
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-          </TableContainer>
-        </Paper>
+        <>
+          <Paper sx={{ overflow: "hidden" }}>
+            <TableContainer sx={{ overflowX: "auto" }}>
+              <Table>
+                <TableHead>
+                  <TableRow>
+                    <TableCell>Dealer</TableCell>
+                    <TableCell>Region</TableCell>
+                    <TableCell>Contact</TableCell>
+                    <TableCell>Status</TableCell>
+                    <TableCell align="right">Action</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {dealersQuery.data.items.map((dealer) => (
+                    <TableRow key={dealer.id} hover>
+                      <TableCell>
+                        <Stack spacing={0.5}>
+                          <Typography fontWeight={800}>{dealer.name}</Typography>
+                          <Typography color="text.secondary">{dealer.code}</Typography>
+                        </Stack>
+                      </TableCell>
+                      <TableCell>{dealer.region}</TableCell>
+                      <TableCell>
+                        <Stack spacing={0.5}>
+                          <Typography>{dealer.contactPerson}</Typography>
+                          <Typography color="text.secondary">{dealer.phone}</Typography>
+                          <Typography color="text.secondary">{dealer.email || "No email"}</Typography>
+                        </Stack>
+                      </TableCell>
+                      <TableCell>
+                        <Chip
+                          label={dealer.active ? "Active" : "Inactive"}
+                          color={dealer.active ? "success" : "default"}
+                        />
+                      </TableCell>
+                      <TableCell align="right">
+                        <Button
+                          size="small"
+                          startIcon={<EditRoundedIcon />}
+                          onClick={() => openEditDialog(dealer)}
+                        >
+                          Edit
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </TableContainer>
+          </Paper>
+          <PaginationBar
+            page={dealersQuery.data.pagination.page}
+            totalPages={dealersQuery.data.pagination.totalPages}
+            totalItems={dealersQuery.data.pagination.totalItems}
+            onPageChange={setPage}
+          />
+        </>
       )}
 
       <Dialog open={dialogOpen} onClose={() => setDialogOpen(false)} fullWidth maxWidth="md">
         <DialogTitle>{editingDealer ? "Edit dealer" : "Create dealer"}</DialogTitle>
         <DialogContent>
-          <Grid container spacing={2} mt={0.5}>
-            <Grid size={{ xs: 12, md: 6 }}>
-              <TextField
-                fullWidth
-                label="Dealer code"
-                value={form.code}
-                onChange={(event) => setForm((current) => ({ ...current, code: event.target.value }))}
-              />
+          <Stack
+            component="form"
+            spacing={2}
+            mt={0.5}
+            onSubmit={form.handleSubmit((values) => saveDealerMutation.mutate(values))}
+          >
+            <Grid container spacing={2}>
+              <Grid size={{ xs: 12, md: 6 }}>
+                <TextField
+                  fullWidth
+                  label="Dealer code"
+                  {...form.register("code")}
+                  error={Boolean(form.formState.errors.code)}
+                  helperText={form.formState.errors.code?.message}
+                />
+              </Grid>
+              <Grid size={{ xs: 12, md: 6 }}>
+                <TextField
+                  fullWidth
+                  label="Dealer name"
+                  {...form.register("name")}
+                  error={Boolean(form.formState.errors.name)}
+                  helperText={form.formState.errors.name?.message}
+                />
+              </Grid>
+              <Grid size={{ xs: 12, md: 6 }}>
+                <TextField
+                  fullWidth
+                  label="Region"
+                  {...form.register("region")}
+                  error={Boolean(form.formState.errors.region)}
+                  helperText={form.formState.errors.region?.message}
+                />
+              </Grid>
+              <Grid size={{ xs: 12, md: 6 }}>
+                <TextField
+                  fullWidth
+                  label="Contact person"
+                  {...form.register("contactPerson")}
+                  error={Boolean(form.formState.errors.contactPerson)}
+                  helperText={form.formState.errors.contactPerson?.message}
+                />
+              </Grid>
+              <Grid size={{ xs: 12, md: 6 }}>
+                <TextField
+                  fullWidth
+                  label="Phone"
+                  {...form.register("phone")}
+                  error={Boolean(form.formState.errors.phone)}
+                  helperText={form.formState.errors.phone?.message}
+                />
+              </Grid>
+              <Grid size={{ xs: 12, md: 6 }}>
+                <TextField
+                  fullWidth
+                  label="Email"
+                  {...form.register("email")}
+                  error={Boolean(form.formState.errors.email)}
+                  helperText={form.formState.errors.email?.message}
+                />
+              </Grid>
+              <Grid size={{ xs: 12 }}>
+                <TextField
+                  fullWidth
+                  type="password"
+                  label={editingDealer ? "Reset password (optional)" : "Initial password"}
+                  {...form.register("password")}
+                  error={Boolean(form.formState.errors.password)}
+                  helperText={
+                    form.formState.errors.password?.message ??
+                    (editingDealer
+                      ? "Leave blank to keep the existing password."
+                      : "Set a secure password for the dealer user.")
+                  }
+                />
+              </Grid>
             </Grid>
-            <Grid size={{ xs: 12, md: 6 }}>
-              <TextField
-                fullWidth
-                label="Dealer name"
-                value={form.name}
-                onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
-              />
-            </Grid>
-            <Grid size={{ xs: 12, md: 6 }}>
-              <TextField
-                fullWidth
-                label="Region"
-                value={form.region}
-                onChange={(event) => setForm((current) => ({ ...current, region: event.target.value }))}
-              />
-            </Grid>
-            <Grid size={{ xs: 12, md: 6 }}>
-              <TextField
-                fullWidth
-                label="Contact person"
-                value={form.contactPerson}
-                onChange={(event) =>
-                  setForm((current) => ({ ...current, contactPerson: event.target.value }))
-                }
-              />
-            </Grid>
-            <Grid size={{ xs: 12, md: 6 }}>
-              <TextField
-                fullWidth
-                label="Phone"
-                value={form.phone}
-                onChange={(event) => setForm((current) => ({ ...current, phone: event.target.value }))}
-              />
-            </Grid>
-            <Grid size={{ xs: 12, md: 6 }}>
-              <TextField
-                fullWidth
-                label="Email"
-                value={form.email}
-                onChange={(event) => setForm((current) => ({ ...current, email: event.target.value }))}
-              />
-            </Grid>
-            <Grid size={{ xs: 12, md: 8 }}>
-              <TextField
-                fullWidth
-                label={editingDealer ? "Reset password (optional)" : "Password"}
-                type="password"
-                value={form.password}
-                onChange={(event) => setForm((current) => ({ ...current, password: event.target.value }))}
-              />
-            </Grid>
-            <Grid size={{ xs: 12, md: 4 }}>
-              <Paper sx={{ p: 2, height: "100%" }}>
-                <Stack direction="row" justifyContent="space-between" alignItems="center">
-                  <Typography fontWeight={700}>Account active</Typography>
-                  <Switch
-                    checked={form.active}
-                    onChange={(_event, checked) =>
-                      setForm((current) => ({ ...current, active: checked }))
-                    }
-                  />
-                </Stack>
-              </Paper>
-            </Grid>
-          </Grid>
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={form.watch("active")}
+                  onChange={(_event, checked) => form.setValue("active", checked)}
+                />
+              }
+              label="Dealer account active"
+            />
+            <DialogActions sx={{ px: 0 }}>
+              <Button onClick={() => setDialogOpen(false)}>Cancel</Button>
+              <Button type="submit" variant="contained" disabled={saveDealerMutation.isPending}>
+                {editingDealer ? "Save changes" : "Create dealer"}
+              </Button>
+            </DialogActions>
+          </Stack>
         </DialogContent>
-        <DialogActions sx={{ px: 3, pb: 3 }}>
-          <Button color="inherit" onClick={() => setDialogOpen(false)}>
-            Cancel
-          </Button>
-          <Button variant="contained" onClick={saveDealer}>
-            Save dealer
-          </Button>
-        </DialogActions>
       </Dialog>
     </Stack>
   );

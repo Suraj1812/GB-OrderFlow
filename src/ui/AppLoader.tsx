@@ -1,4 +1,4 @@
-import { Box, CircularProgress, Stack, Typography } from "@mui/material";
+import { CircularProgress, Stack, Typography } from "@mui/material";
 
 export function AppLoader({ label }: { label: string }) {
   return (
@@ -13,4 +13,3 @@ export function AppLoader({ label }: { label: string }) {
     </Stack>
   );
 }
-

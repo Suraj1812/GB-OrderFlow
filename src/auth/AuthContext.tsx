@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components */
 import {
   createContext,
   useContext,
@@ -7,98 +8,77 @@ import {
   type PropsWithChildren,
 } from "react";
 import toast from "react-hot-toast";
+
 import type {
-  AuthSession,
+  AuthResponse,
   DealerLoginInput,
+  ForgotPasswordInput,
   HeadOfficeLoginInput,
+  ResetPasswordInput,
+  SessionUser,
   UserRole,
 } from "../../shared/contracts";
-
-import { apiClient, setClientToken } from "../api/client";
-
-const storageKey = "gb-orderflow-session";
+import { apiClient, getApiErrorMessage, setCsrfToken } from "../api/client";
 
 interface AuthContextValue {
-  session: AuthSession | null;
+  session: SessionUser | null;
   bootstrapping: boolean;
   loginDealer: (input: DealerLoginInput) => Promise<void>;
   loginHeadOffice: (input: HeadOfficeLoginInput) => Promise<void>;
-  logout: () => void;
+  logout: () => Promise<void>;
+  requestPasswordReset: (input: ForgotPasswordInput) => Promise<{ message: string; otpPreview?: string }>;
+  resetPassword: (input: ResetPasswordInput) => Promise<void>;
   getDefaultRoute: (role?: UserRole | null) => string;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
-function readStoredSession() {
-  const raw = window.localStorage.getItem(storageKey);
+async function readSessionFromServer() {
+  const response = await apiClient.post<AuthResponse>("/auth/refresh", undefined, {
+    skipAuthRefresh: true,
+  });
 
-  if (!raw) {
-    return null;
-  }
-
-  try {
-    return JSON.parse(raw) as AuthSession;
-  } catch {
-    window.localStorage.removeItem(storageKey);
-    return null;
-  }
+  setCsrfToken(response.data.csrfToken);
+  return response.data.user;
 }
 
 export function AuthProvider({ children }: PropsWithChildren) {
-  const [session, setSession] = useState<AuthSession | null>(() => readStoredSession());
+  const [session, setSession] = useState<SessionUser | null>(null);
   const [bootstrapping, setBootstrapping] = useState(true);
 
   useEffect(() => {
-    setClientToken(session?.token ?? null);
-
-    if (session) {
-      window.localStorage.setItem(storageKey, JSON.stringify(session));
-    } else {
-      window.localStorage.removeItem(storageKey);
-    }
-  }, [session]);
-
-  useEffect(() => {
-    let active = true;
+    let mounted = true;
 
     async function restore() {
-      const storedSession = readStoredSession();
-      if (!storedSession) {
-        setBootstrapping(false);
-        return;
-      }
-
-      setClientToken(storedSession.token);
-
       try {
-        await apiClient.get("/auth/me");
-        if (active) {
-          setSession(storedSession);
+        const user = await readSessionFromServer();
+        if (mounted) {
+          setSession(user);
         }
       } catch {
-        if (active) {
+        if (mounted) {
           setSession(null);
-          setClientToken(null);
+          setCsrfToken(null);
         }
       } finally {
-        if (active) {
+        if (mounted) {
           setBootstrapping(false);
         }
       }
     }
 
-    restore();
+    void restore();
 
     return () => {
-      active = false;
+      mounted = false;
     };
   }, []);
 
   useEffect(() => {
     const handleExpiry = () => {
       setSession(null);
-      setClientToken(null);
-      toast.error("Your session ended. Please sign in again.");
+      setCsrfToken(null);
+      toast.error("Your session has expired. Please sign in again.");
     };
 
     window.addEventListener("gb:session-expired", handleExpiry);
@@ -109,29 +89,59 @@ export function AuthProvider({ children }: PropsWithChildren) {
   }, []);
 
   async function loginDealer(input: DealerLoginInput) {
-    const response = await apiClient.post<AuthSession>("/auth/login/dealer", input);
-    setSession(response.data);
+    const response = await apiClient.post<AuthResponse>("/auth/login/dealer", input, {
+      skipAuthRefresh: true,
+    });
+    setCsrfToken(response.data.csrfToken);
+    setSession(response.data.user);
   }
 
   async function loginHeadOffice(input: HeadOfficeLoginInput) {
-    const response = await apiClient.post<AuthSession>(
-      "/auth/login/head-office",
-      input,
-    );
-    setSession(response.data);
+    const response = await apiClient.post<AuthResponse>("/auth/login/head-office", input, {
+      skipAuthRefresh: true,
+    });
+    setCsrfToken(response.data.csrfToken);
+    setSession(response.data.user);
   }
 
-  function logout() {
-    setSession(null);
-    setClientToken(null);
+  async function logout() {
+    try {
+      await apiClient.post(
+        "/auth/logout",
+        undefined,
+        {
+          skipAuthRefresh: true,
+        },
+      );
+    } catch (error) {
+      if (getApiErrorMessage(error) !== "Authentication required.") {
+        throw error;
+      }
+    } finally {
+      setSession(null);
+      setCsrfToken(null);
+    }
+  }
+
+  async function requestPasswordReset(input: ForgotPasswordInput) {
+    const response = await apiClient.post<{ message: string; otpPreview?: string }>(
+      "/auth/forgot-password",
+      input,
+      {
+        skipAuthRefresh: true,
+      },
+    );
+    return response.data;
+  }
+
+  async function resetPassword(input: ResetPasswordInput) {
+    await apiClient.post("/auth/reset-password", input, {
+      skipAuthRefresh: true,
+    });
   }
 
   function getDefaultRoute(role?: UserRole | null) {
-    if (role === "head_office") {
-      return "/head-office/dashboard";
-    }
-
-    return "/dealer/catalog";
+    return role === "head_office" ? "/head-office/dashboard" : "/dealer/catalog";
   }
 
   const value = useMemo<AuthContextValue>(
@@ -141,6 +151,8 @@ export function AuthProvider({ children }: PropsWithChildren) {
       loginDealer,
       loginHeadOffice,
       logout,
+      requestPasswordReset,
+      resetPassword,
       getDefaultRoute,
     }),
     [bootstrapping, session],
@@ -158,4 +170,3 @@ export function useAuth() {
 
   return context;
 }
-

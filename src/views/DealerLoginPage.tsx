@@ -11,50 +11,41 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
-import axios from "axios";
+import { zodResolver } from "@hookform/resolvers/zod";
 import { useState } from "react";
+import { useForm } from "react-hook-form";
 import toast from "react-hot-toast";
 import { Link as RouterLink, Navigate, useNavigate } from "react-router-dom";
 
+import type { DealerLoginInput } from "../../shared/contracts";
 import { dealerLoginSchema } from "../../shared/contracts";
+import { getApiErrorMessage } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
+import { PasswordResetDialog } from "../ui/PasswordResetDialog";
 
 export function DealerLoginPage() {
   const navigate = useNavigate();
   const { session, loginDealer, getDefaultRoute } = useAuth();
-  const [form, setForm] = useState({
-    dealerCode: "GB-D001",
-    password: "dealer123",
+  const [resetOpen, setResetOpen] = useState(false);
+  const form = useForm<DealerLoginInput>({
+    resolver: zodResolver(dealerLoginSchema),
+    defaultValues: {
+      dealerCode: "GB-D001",
+      password: "dealer123",
+    },
   });
-  const [submitting, setSubmitting] = useState(false);
 
   if (session) {
     return <Navigate to={getDefaultRoute(session.role)} replace />;
   }
 
-  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const parsed = dealerLoginSchema.safeParse(form);
-
-    if (!parsed.success) {
-      toast.error(parsed.error.issues[0]?.message ?? "Enter valid credentials.");
-      return;
-    }
-
-    setSubmitting(true);
-
+  async function handleSubmit(values: DealerLoginInput) {
     try {
-      await loginDealer(parsed.data);
+      await loginDealer(values);
       toast.success("Dealer workspace ready.");
       navigate("/dealer/catalog");
     } catch (error) {
-      if (axios.isAxiosError(error)) {
-        toast.error(error.response?.data?.message ?? "Sign-in failed.");
-      } else {
-        toast.error("Sign-in failed.");
-      }
-    } finally {
-      setSubmitting(false);
+      toast.error(getApiErrorMessage(error, "Sign-in failed."));
     }
   }
 
@@ -68,11 +59,10 @@ export function DealerLoginPage() {
                 <Typography variant="overline">Dealer Sign-In</Typography>
                 <Typography variant="h2">Order stock without calling Head Office.</Typography>
                 <Typography color="text.secondary">
-                  Search the live catalogue, build your cart, submit the order, and
-                  track approval status from any smartphone browser.
+                  Search the live catalogue, build your cart, submit orders, and track approval status from any phone, tablet, or desktop browser.
                 </Typography>
                 <Alert severity="info" sx={{ mt: 2, borderRadius: 4 }}>
-                  Demo credentials are prefilled for the seeded environment.
+                  Seeded credentials are prefilled for the local environment.
                 </Alert>
               </Stack>
             </CardContent>
@@ -80,7 +70,11 @@ export function DealerLoginPage() {
 
           <Card sx={{ width: "100%", maxWidth: 470 }}>
             <CardContent sx={{ p: { xs: 3, md: 4 } }}>
-              <Stack component="form" spacing={2.5} onSubmit={handleSubmit}>
+              <Stack
+                component="form"
+                spacing={2.5}
+                onSubmit={form.handleSubmit((values) => void handleSubmit(values))}
+              >
                 <Box>
                   <Typography variant="h4">Welcome back</Typography>
                   <Typography mt={0.75} color="text.secondary">
@@ -89,33 +83,30 @@ export function DealerLoginPage() {
                 </Box>
                 <TextField
                   label="Dealer code"
-                  value={form.dealerCode}
-                  onChange={(event) =>
-                    setForm((current) => ({
-                      ...current,
-                      dealerCode: event.target.value,
-                    }))
-                  }
+                  autoComplete="username"
+                  {...form.register("dealerCode")}
+                  error={Boolean(form.formState.errors.dealerCode)}
+                  helperText={form.formState.errors.dealerCode?.message}
                 />
                 <TextField
                   label="Password"
                   type="password"
-                  value={form.password}
-                  onChange={(event) =>
-                    setForm((current) => ({
-                      ...current,
-                      password: event.target.value,
-                    }))
-                  }
+                  autoComplete="current-password"
+                  {...form.register("password")}
+                  error={Boolean(form.formState.errors.password)}
+                  helperText={form.formState.errors.password?.message}
                 />
                 <Button
                   type="submit"
                   size="large"
                   variant="contained"
-                  disabled={submitting}
+                  disabled={form.formState.isSubmitting}
                   endIcon={<ArrowForwardRoundedIcon />}
                 >
                   Enter dealer portal
+                </Button>
+                <Button variant="text" color="inherit" onClick={() => setResetOpen(true)}>
+                  Forgot password?
                 </Button>
                 <Typography color="text.secondary" variant="body2">
                   Need Head Office access?{" "}
@@ -128,7 +119,12 @@ export function DealerLoginPage() {
           </Card>
         </Stack>
       </Container>
+
+      <PasswordResetDialog
+        open={resetOpen}
+        onClose={() => setResetOpen(false)}
+        defaultIdentifier={form.watch("dealerCode")}
+      />
     </Box>
   );
 }
-
