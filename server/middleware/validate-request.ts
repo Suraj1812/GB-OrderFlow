@@ -1,6 +1,18 @@
 import type { NextFunction, Request, Response } from "express";
 import type { ZodTypeAny } from "zod";
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function syncRecord(target: Record<string, unknown>, nextValue: Record<string, unknown>) {
+  for (const key of Object.keys(target)) {
+    delete target[key];
+  }
+
+  Object.assign(target, nextValue);
+}
+
 export function validateRequest(schemas: {
   body?: ZodTypeAny;
   query?: ZodTypeAny;
@@ -25,7 +37,12 @@ export function validateRequest(schemas: {
         return;
       }
 
-      request[source] = parsed.data;
+      if ((source === "query" || source === "params") && isRecord(request[source]) && isRecord(parsed.data)) {
+        syncRecord(request[source], parsed.data);
+        continue;
+      }
+
+      request[source] = parsed.data as never;
     }
 
     next();
