@@ -60,7 +60,7 @@ Frontend: `http://127.0.0.1:5173`
 
 API: `http://127.0.0.1:4000`
 
-If port `4000` is already in use, set `PORT` in `.env` to another value and keep `API_ORIGIN` in sync. `HOST` defaults to `127.0.0.1` in development and can be overridden when needed.
+If port `4000` is already in use, set `PORT` in `.env` to another value and keep `API_ORIGIN` in sync. The Vite dev proxy now follows `API_ORIGIN`, and `HOST` defaults to `127.0.0.1` in development.
 
 Operational endpoints:
 
