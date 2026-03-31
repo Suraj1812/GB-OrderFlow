@@ -20,7 +20,7 @@ import {
   useMediaQuery,
 } from "@mui/material";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { type CSSProperties, memo, startTransition, useDeferredValue, useEffect, useMemo, useState } from "react";
+import { type CSSProperties, memo, startTransition, useEffect, useMemo, useState } from "react";
 import type { ListChildComponentProps } from "react-window";
 import { FixedSizeList } from "react-window";
 import toast from "react-hot-toast";
@@ -36,6 +36,7 @@ import { createOrderSchema } from "../../shared/contracts";
 import { apiClient, getApiErrorMessage } from "../api/client";
 import { queryKeys } from "../api/query-keys";
 import { useAuth } from "../auth/AuthContext";
+import { useDebouncedValue } from "../hooks/useDebouncedValue";
 import { EmptyState } from "../ui/EmptyState";
 import { LoadingPanel } from "../ui/LoadingPanel";
 import { MetricCard } from "../ui/MetricCard";
@@ -135,12 +136,12 @@ export function DealerCatalogPage() {
   const [qtyDrafts, setQtyDrafts] = useState<Record<string, string>>({});
   const [cart, setCart] = useState<CartState>({});
   const [cartOpen, setCartOpen] = useState(false);
-  const deferredSearch = useDeferredValue(searchInput);
+  const debouncedSearch = useDebouncedValue(searchInput, 250);
 
   const catalogQueryState: CatalogQuery = {
     page,
     pageSize: PAGE_SIZE,
-    search: deferredSearch.trim(),
+    search: debouncedSearch.trim(),
     category: selectedCategory,
   };
 
@@ -177,7 +178,7 @@ export function DealerCatalogPage() {
 
   useEffect(() => {
     setPage(1);
-  }, [deferredSearch, selectedCategory]);
+  }, [debouncedSearch, selectedCategory]);
 
   const cartItems = useMemo(() => Object.values(cart), [cart]);
   const cartQty = useMemo(

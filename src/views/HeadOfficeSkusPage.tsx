@@ -25,7 +25,7 @@ import {
   Typography,
 } from "@mui/material";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { startTransition, useDeferredValue, useEffect, useState } from "react";
+import { startTransition, useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import toast from "react-hot-toast";
 
@@ -34,6 +34,7 @@ import { upsertSkuSchema } from "../../shared/contracts";
 import { apiClient, getApiErrorMessage } from "../api/client";
 import { queryKeys } from "../api/query-keys";
 import { formatCurrency } from "../lib/format";
+import { useDebouncedValue } from "../hooks/useDebouncedValue";
 import { EmptyState } from "../ui/EmptyState";
 import { LoadingPanel } from "../ui/LoadingPanel";
 import { PageHeader } from "../ui/PageHeader";
@@ -54,7 +55,7 @@ export function HeadOfficeSkusPage() {
   const [page, setPage] = useState(1);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingSku, setEditingSku] = useState<Sku | null>(null);
-  const deferredSearch = useDeferredValue(searchInput);
+  const debouncedSearch = useDebouncedValue(searchInput, 250);
 
   const form = useForm<UpsertSkuInput>({
     resolver: zodResolver(upsertSkuSchema),
@@ -63,20 +64,20 @@ export function HeadOfficeSkusPage() {
 
   useEffect(() => {
     setPage(1);
-  }, [deferredSearch]);
+  }, [debouncedSearch]);
 
   const skusQuery = useQuery({
     queryKey: queryKeys.skus({
       page,
       pageSize: 10,
-      search: deferredSearch.trim(),
+      search: debouncedSearch.trim(),
     }),
     queryFn: async () => {
       const response = await apiClient.get<PaginatedSkusResponse>("/ho/skus", {
         params: {
           page,
           pageSize: 10,
-          search: deferredSearch.trim(),
+          search: debouncedSearch.trim(),
         },
       });
       return response.data;

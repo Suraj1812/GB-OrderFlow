@@ -11,12 +11,13 @@ import {
   Typography,
 } from "@mui/material";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { startTransition, useDeferredValue, useEffect, useState } from "react";
+import { startTransition, useEffect, useState } from "react";
 
 import type { OrderListQuery, PaginatedDealerOrdersResponse } from "../../shared/contracts";
 import { apiClient, getApiErrorMessage } from "../api/client";
 import { queryKeys } from "../api/query-keys";
 import { formatCurrency, formatDateTime } from "../lib/format";
+import { useDebouncedValue } from "../hooks/useDebouncedValue";
 import { EmptyState } from "../ui/EmptyState";
 import { LoadingPanel } from "../ui/LoadingPanel";
 import { PageHeader } from "../ui/PageHeader";
@@ -34,16 +35,16 @@ export function DealerOrdersPage() {
   const [statusFilter, setStatusFilter] = useState<OrderListQuery["status"]>("all");
   const [searchInput, setSearchInput] = useState("");
   const [page, setPage] = useState(1);
-  const deferredSearch = useDeferredValue(searchInput);
+  const debouncedSearch = useDebouncedValue(searchInput, 250);
 
   useEffect(() => {
     setPage(1);
-  }, [deferredSearch, statusFilter]);
+  }, [debouncedSearch, statusFilter]);
 
   const queryState: OrderListQuery = {
     page,
     pageSize: 10,
-    search: deferredSearch.trim(),
+    search: debouncedSearch.trim(),
     status: statusFilter,
   };
 

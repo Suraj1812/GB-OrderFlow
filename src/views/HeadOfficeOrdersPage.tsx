@@ -25,7 +25,7 @@ import {
   Typography,
 } from "@mui/material";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { startTransition, useDeferredValue, useEffect, useMemo, useState } from "react";
+import { startTransition, useEffect, useMemo, useState } from "react";
 import toast from "react-hot-toast";
 
 import type {
@@ -39,6 +39,7 @@ import { apiClient, getApiErrorMessage } from "../api/client";
 import { queryKeys } from "../api/query-keys";
 import { triggerFileDownload } from "../lib/download";
 import { formatCurrency, formatDateTime } from "../lib/format";
+import { useDebouncedValue } from "../hooks/useDebouncedValue";
 import { EmptyState } from "../ui/EmptyState";
 import { LoadingPanel } from "../ui/LoadingPanel";
 import { PageHeader } from "../ui/PageHeader";
@@ -46,6 +47,22 @@ import { PaginationBar } from "../ui/PaginationBar";
 import { StatusChip } from "../ui/StatusChip";
 
 type OrderTab = "pending" | "approved" | "rejected";
+
+function calculateNetPreview(grossAmount: number, discountValue: string, fallbackNet: number | null) {
+  if (discountValue.trim() === "") {
+    return fallbackNet;
+  }
+
+  const parsedDiscount = Number(discountValue);
+  if (!Number.isFinite(parsedDiscount) || parsedDiscount < 0 || parsedDiscount > 100) {
+    return fallbackNet;
+  }
+
+  const grossAmountCents = Math.round(grossAmount * 100);
+  const discountBasisPoints = Math.round(parsedDiscount * 100);
+  const netAmountCents = Math.round((grossAmountCents * (10_000 - discountBasisPoints)) / 10_000);
+  return Number((netAmountCents / 100).toFixed(2));
+}
 
 function ExportStatusBadge({ status }: { status: Order["exportStatus"] }) {
   if (status === "completed") {
@@ -89,16 +106,17 @@ export function HeadOfficeOrdersPage() {
   const [discountDrafts, setDiscountDrafts] = useState<Record<string, string>>({});
   const [rejectingOrder, setRejectingOrder] = useState<Order | null>(null);
   const [rejectRemarks, setRejectRemarks] = useState("");
-  const deferredSearch = useDeferredValue(searchInput);
+  const [downloadingOrderId, setDownloadingOrderId] = useState<string | null>(null);
+  const debouncedSearch = useDebouncedValue(searchInput, 250);
 
   useEffect(() => {
     setPage(1);
-  }, [deferredSearch, tab]);
+  }, [debouncedSearch, tab]);
 
   const queryState: OrderListQuery = {
     page,
     pageSize: 8,
-    search: deferredSearch.trim(),
+    search: debouncedSearch.trim(),
     status: tab,
   };
 
@@ -165,9 +183,12 @@ export function HeadOfficeOrdersPage() {
   });
 
   const reviewOrders = useMemo(() => ordersQuery.data?.items ?? [], [ordersQuery.data]);
+  const approvingOrderId = approveMutation.isPending ? approveMutation.variables?.orderId ?? null : null;
+  const rejectingPendingOrderId = rejectMutation.isPending ? rejectMutation.variables?.orderId ?? null : null;
 
   async function downloadExport(order: Order) {
     try {
+      setDownloadingOrderId(order.id);
       const response = await apiClient.get<ExportResult>(`/ho/orders/${order.id}/export`);
 
       if (response.data.downloadUrl) {
@@ -179,6 +200,8 @@ export function HeadOfficeOrdersPage() {
       await waitForExport(order.id, order.orderNumber);
     } catch (error) {
       toast.error(getApiErrorMessage(error, "Unable to prepare the export."));
+    } finally {
+      setDownloadingOrderId((current) => (current === order.id ? null : current));
     }
   }
 
@@ -244,11 +267,10 @@ export function HeadOfficeOrdersPage() {
           <Stack spacing={3}>
             {reviewOrders.map((order) => {
               const draftValue = discountDrafts[order.id] ?? String(order.discountPct ?? "");
-              const parsedDiscount = Number(draftValue);
-              const previewNet =
-                draftValue !== "" && Number.isFinite(parsedDiscount)
-                  ? order.grossAmount * (1 - parsedDiscount / 100)
-                  : order.netAmount;
+              const previewNet = calculateNetPreview(order.grossAmount, draftValue, order.netAmount);
+              const isApprovingThisOrder = approvingOrderId === order.id;
+              const isRejectingThisOrder = rejectingPendingOrderId === order.id;
+              const isDownloadingThisOrder = downloadingOrderId === order.id;
 
               return (
                 <Card key={order.id}>
@@ -349,6 +371,12 @@ export function HeadOfficeOrdersPage() {
                               <TextField
                                 label="Discount %"
                                 type="number"
+                                inputProps={{
+                                  min: 0,
+                                  max: 100,
+                                  step: 0.01,
+                                }}
+                                inputMode="decimal"
                                 value={draftValue}
                                 onChange={(event) =>
                                   setDiscountDrafts((current) => ({
@@ -359,7 +387,7 @@ export function HeadOfficeOrdersPage() {
                               />
                               <Button
                                 variant="contained"
-                                disabled={approveMutation.isPending}
+                                disabled={isApprovingThisOrder || approveMutation.isPending}
                                 onClick={() => {
                                   const parsed = approveOrderSchema.safeParse({
                                     discountPct: draftValue || 0,
@@ -379,11 +407,12 @@ export function HeadOfficeOrdersPage() {
                                   });
                                 }}
                               >
-                                Approve order
+                                {isApprovingThisOrder ? "Approving..." : "Approve order"}
                               </Button>
                               <Button
                                 variant="outlined"
                                 color="inherit"
+                                disabled={approveMutation.isPending || isRejectingThisOrder}
                                 onClick={() => setRejectingOrder(order)}
                               >
                                 Reject order
@@ -394,9 +423,10 @@ export function HeadOfficeOrdersPage() {
                               <Button
                                 variant="contained"
                                 startIcon={<DownloadRoundedIcon />}
+                                disabled={isDownloadingThisOrder}
                                 onClick={() => void downloadExport(order)}
                               >
-                                Download CSV
+                                {isDownloadingThisOrder ? "Preparing CSV..." : "Download CSV"}
                               </Button>
                               <Typography color="text.secondary" alignSelf="center">
                                 Export status: {order.exportStatus ?? "pending"}
@@ -424,7 +454,11 @@ export function HeadOfficeOrdersPage() {
 
       <Dialog
         open={Boolean(rejectingOrder)}
-        onClose={() => setRejectingOrder(null)}
+        onClose={() => {
+          if (!rejectMutation.isPending) {
+            setRejectingOrder(null);
+          }
+        }}
         fullWidth
         maxWidth="sm"
       >
@@ -444,7 +478,12 @@ export function HeadOfficeOrdersPage() {
           </Stack>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setRejectingOrder(null)}>Cancel</Button>
+          <Button
+            disabled={rejectMutation.isPending}
+            onClick={() => setRejectingOrder(null)}
+          >
+            Cancel
+          </Button>
           <Button
             color="error"
             variant="contained"
@@ -460,7 +499,7 @@ export function HeadOfficeOrdersPage() {
               });
             }}
           >
-            Confirm rejection
+            {rejectMutation.isPending ? "Rejecting..." : "Confirm rejection"}
           </Button>
         </DialogActions>
       </Dialog>

@@ -25,7 +25,7 @@ import {
   Typography,
 } from "@mui/material";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { startTransition, useDeferredValue, useEffect, useState } from "react";
+import { startTransition, useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import toast from "react-hot-toast";
 
@@ -33,6 +33,7 @@ import type { Dealer, PaginatedDealersResponse, UpsertDealerInput } from "../../
 import { upsertDealerSchema } from "../../shared/contracts";
 import { apiClient, getApiErrorMessage } from "../api/client";
 import { queryKeys } from "../api/query-keys";
+import { useDebouncedValue } from "../hooks/useDebouncedValue";
 import { EmptyState } from "../ui/EmptyState";
 import { LoadingPanel } from "../ui/LoadingPanel";
 import { PageHeader } from "../ui/PageHeader";
@@ -55,7 +56,7 @@ export function HeadOfficeDealersPage() {
   const [page, setPage] = useState(1);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingDealer, setEditingDealer] = useState<Dealer | null>(null);
-  const deferredSearch = useDeferredValue(searchInput);
+  const debouncedSearch = useDebouncedValue(searchInput, 250);
 
   const form = useForm<UpsertDealerInput>({
     resolver: zodResolver(upsertDealerSchema),
@@ -64,20 +65,20 @@ export function HeadOfficeDealersPage() {
 
   useEffect(() => {
     setPage(1);
-  }, [deferredSearch]);
+  }, [debouncedSearch]);
 
   const dealersQuery = useQuery({
     queryKey: queryKeys.dealers({
       page,
       pageSize: 10,
-      search: deferredSearch.trim(),
+      search: debouncedSearch.trim(),
     }),
     queryFn: async () => {
       const response = await apiClient.get<PaginatedDealersResponse>("/ho/dealers", {
         params: {
           page,
           pageSize: 10,
-          search: deferredSearch.trim(),
+          search: debouncedSearch.trim(),
         },
       });
       return response.data;
