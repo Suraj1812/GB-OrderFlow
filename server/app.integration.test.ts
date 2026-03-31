@@ -135,4 +135,20 @@ describe("API integration", () => {
     expect(response.cookies.gb_csrf_token).toBeDefined();
     expect(mockPrisma.session.create).toHaveBeenCalled();
   });
+
+  it("returns unauthorized when refresh token cookie is missing", async () => {
+    const { createApp } = await import("./app.js");
+    const response = await invokeApp(createApp({ disableHttpLogger: true }), {
+      method: "POST",
+      url: "/api/auth/refresh",
+    });
+
+    expect(response.statusCode).toBe(401);
+    expect(response._getJSONData()).toEqual(
+      expect.objectContaining({
+        code: "UNAUTHORIZED",
+        message: "Refresh token is missing.",
+      }),
+    );
+  });
 });
