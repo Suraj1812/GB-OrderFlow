@@ -7,7 +7,11 @@ import type {
   OrderListQuery,
   SessionUser,
 } from "../../shared/contracts.js";
-import { createOrderSchema } from "../../shared/contracts.js";
+import {
+  catalogQuerySchema,
+  createOrderSchema,
+  orderListQuerySchema,
+} from "../../shared/contracts.js";
 import { AppError } from "../core/errors.js";
 import { buildPaginationMeta } from "../core/pagination.js";
 import { AuthRepository } from "../repositories/auth.repository.js";
@@ -33,32 +37,35 @@ export class DealerPortalService {
   ) {}
 
   public async getCatalog(query: CatalogQuery) {
+    const parsedQuery = catalogQuerySchema.parse(query);
     const [items, totalItems, categories] = await Promise.all([
-      this.catalogRepository.listCatalog(query),
-      this.catalogRepository.countCatalog(query),
+      this.catalogRepository.listCatalog(parsedQuery),
+      this.catalogRepository.countCatalog(parsedQuery),
       this.catalogRepository.listCategories(),
     ]);
 
     return {
       items: items.map(mapCatalogItem),
       categories: categories.map((item) => item.category),
-      pagination: buildPaginationMeta(query.page, query.pageSize, totalItems),
+      pagination: buildPaginationMeta(parsedQuery.page, parsedQuery.pageSize, totalItems),
     };
   }
 
   public async getOrders(user: SessionUser, query: OrderListQuery) {
+    const parsedQuery = orderListQuerySchema.parse(query);
+
     if (!user.dealerId) {
       throw new AppError(403, "FORBIDDEN", "Dealer session is not linked to a dealer account.");
     }
 
     const [items, totalItems] = await Promise.all([
-      this.catalogRepository.listDealerOrders(user.dealerId, query),
-      this.catalogRepository.countDealerOrders(user.dealerId, query),
+      this.catalogRepository.listDealerOrders(user.dealerId, parsedQuery),
+      this.catalogRepository.countDealerOrders(user.dealerId, parsedQuery),
     ]);
 
     return {
       items: items.map(mapDealerOrder),
-      pagination: buildPaginationMeta(query.page, query.pageSize, totalItems),
+      pagination: buildPaginationMeta(parsedQuery.page, parsedQuery.pageSize, totalItems),
     };
   }
 

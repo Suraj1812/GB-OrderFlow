@@ -5,8 +5,8 @@ import { describe, expect, it, vi } from "vitest";
 import { validateRequest } from "./validate-request.js";
 
 describe("validateRequest", () => {
-  it("hydrates getter-backed query objects without reassigning request.query", () => {
-    const query = {
+  it("hydrates getter-backed query objects and shadows request.query with parsed data", () => {
+    const rawQuery = {
       page: "2",
       pageSize: "4",
       search: "",
@@ -17,7 +17,12 @@ describe("validateRequest", () => {
     Object.defineProperty(request, "query", {
       configurable: true,
       enumerable: true,
-      get: () => query,
+      get: () => ({
+        page: rawQuery.page,
+        pageSize: rawQuery.pageSize,
+        search: rawQuery.search,
+        status: rawQuery.status,
+      }),
     });
 
     const response = {
@@ -35,7 +40,7 @@ describe("validateRequest", () => {
       }),
     })(request as Request, response, next);
 
-    expect(query).toEqual({
+    expect(request.query).toEqual({
       page: 2,
       pageSize: 4,
       search: "",

@@ -11,6 +11,10 @@ import type {
   UpsertDealerInput,
   UpsertSkuInput,
 } from "../../shared/contracts.js";
+import {
+  orderListQuerySchema,
+  paginationQuerySchema,
+} from "../../shared/contracts.js";
 import { env } from "../config/env.js";
 import { buildDeterministicCsv } from "../core/csv.js";
 import { AppError } from "../core/errors.js";
@@ -50,14 +54,15 @@ export class HeadOfficeService {
   }
 
   public async listOrders(query: OrderListQuery) {
+    const parsedQuery = orderListQuerySchema.parse(query);
     const [items, totalItems] = await Promise.all([
-      this.orderRepository.listHeadOfficeOrders(query),
-      this.orderRepository.countHeadOfficeOrders(query),
+      this.orderRepository.listHeadOfficeOrders(parsedQuery),
+      this.orderRepository.countHeadOfficeOrders(parsedQuery),
     ]);
 
     return {
       items: items.map(mapOrder),
-      pagination: buildPaginationMeta(query.page, query.pageSize, totalItems),
+      pagination: buildPaginationMeta(parsedQuery.page, parsedQuery.pageSize, totalItems),
     };
   }
 
@@ -365,14 +370,15 @@ export class HeadOfficeService {
   }
 
   public async listDealers(query: PaginationQuery) {
+    const parsedQuery = paginationQuerySchema.parse(query);
     const [items, totalItems] = await Promise.all([
-      this.masterRepository.listDealers(query),
-      this.masterRepository.countDealers(query),
+      this.masterRepository.listDealers(parsedQuery),
+      this.masterRepository.countDealers(parsedQuery),
     ]);
 
     return {
       items: items.map(mapDealer),
-      pagination: buildPaginationMeta(query.page, query.pageSize, totalItems),
+      pagination: buildPaginationMeta(parsedQuery.page, parsedQuery.pageSize, totalItems),
     };
   }
 
@@ -504,14 +510,15 @@ export class HeadOfficeService {
   }
 
   public async listSkus(query: PaginationQuery) {
+    const parsedQuery = paginationQuerySchema.parse(query);
     const [items, totalItems] = await Promise.all([
-      this.masterRepository.listSkus(query),
-      this.masterRepository.countSkus(query),
+      this.masterRepository.listSkus(parsedQuery),
+      this.masterRepository.countSkus(parsedQuery),
     ]);
 
     return {
       items: items.map(mapSku),
-      pagination: buildPaginationMeta(query.page, query.pageSize, totalItems),
+      pagination: buildPaginationMeta(parsedQuery.page, parsedQuery.pageSize, totalItems),
     };
   }
 

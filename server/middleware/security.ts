@@ -6,10 +6,6 @@ import { env } from "../config/env.js";
 import { cookieNames } from "../core/cookies.js";
 import { AppError } from "../core/errors.js";
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
-
 function sanitizeValue(value: unknown): unknown {
   if (typeof value === "string") {
     return value.split("\0").join("").trim();
@@ -31,23 +27,30 @@ function sanitizeValue(value: unknown): unknown {
   return value;
 }
 
-function sanitizeRecordInPlace(record: Record<string, unknown>) {
-  for (const [key, currentValue] of Object.entries(record)) {
-    record[key] = sanitizeValue(currentValue);
-  }
+function replaceRequestSource(
+  request: Request,
+  source: "body" | "query" | "params",
+  value: unknown,
+) {
+  Object.defineProperty(request, source, {
+    configurable: true,
+    enumerable: true,
+    writable: true,
+    value,
+  });
 }
 
 export function sanitizeRequest(request: Request, _response: Response, next: NextFunction) {
   if (request.body) {
-    request.body = sanitizeValue(request.body);
+    replaceRequestSource(request, "body", sanitizeValue(request.body));
   }
 
-  if (isRecord(request.query)) {
-    sanitizeRecordInPlace(request.query);
+  if (request.query) {
+    replaceRequestSource(request, "query", sanitizeValue(request.query));
   }
 
-  if (isRecord(request.params)) {
-    sanitizeRecordInPlace(request.params);
+  if (request.params) {
+    replaceRequestSource(request, "params", sanitizeValue(request.params));
   }
 
   next();

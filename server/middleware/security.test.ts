@@ -4,8 +4,8 @@ import { describe, expect, it, vi } from "vitest";
 import { sanitizeRequest } from "./security.js";
 
 describe("sanitizeRequest", () => {
-  it("sanitizes getter-backed query objects without reassigning request.query", () => {
-    const query = {
+  it("sanitizes getter-backed query objects and shadows request.query with sanitized data", () => {
+    const rawQuery = {
       search: "  dealer\0  ",
       nested: {
         value: "  sku-1  ",
@@ -23,7 +23,12 @@ describe("sanitizeRequest", () => {
     Object.defineProperty(request, "query", {
       configurable: true,
       enumerable: true,
-      get: () => query,
+      get: () => ({
+        search: rawQuery.search,
+        nested: {
+          value: rawQuery.nested.value,
+        },
+      }),
     });
 
     const next = vi.fn<NextFunction>();
@@ -33,7 +38,7 @@ describe("sanitizeRequest", () => {
     expect(request.body).toEqual({
       note: "urgent",
     });
-    expect(query).toEqual({
+    expect(request.query).toEqual({
       search: "dealer",
       nested: {
         value: "sku-1",
