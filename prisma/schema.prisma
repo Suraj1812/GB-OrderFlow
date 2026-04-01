@@ -1,0 +1,213 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  DEALER
+  HEAD_OFFICE
+}
+
+enum OrderStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum ExportStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+enum AuditAction {
+  LOGIN_SUCCESS
+  LOGIN_FAILED
+  REFRESH_SUCCESS
+  REFRESH_FAILED
+  LOGOUT
+  PASSWORD_RESET_REQUEST
+  PASSWORD_RESET_SUCCESS
+  PASSWORD_RESET_FAILED
+  DEALER_CREATED
+  DEALER_UPDATED
+  SKU_CREATED
+  SKU_UPDATED
+  ORDER_CREATED
+  ORDER_APPROVED
+  ORDER_REJECTED
+  EXPORT_GENERATED
+  EXPORT_DOWNLOADED
+}
+
+model Dealer {
+  id             String   @id @default(cuid())
+  code           String   @unique
+  name           String
+  region         String
+  contactPerson  String
+  phone          String
+  email          String?
+  active         Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  users          User[]
+  orders         Order[]
+
+  @@index([active, code])
+  @@index([name])
+}
+
+model User {
+  id                  String               @id @default(cuid())
+  dealerId            String?
+  username            String               @unique
+  displayName         String
+  email               String?              @unique
+  passwordHash        String
+  role                UserRole
+  active              Boolean              @default(true)
+  failedLoginAttempts Int                  @default(0)
+  lockedUntil         DateTime?
+  lastLoginAt         DateTime?
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+  dealer              Dealer?              @relation(fields: [dealerId], references: [id], onDelete: SetNull)
+  sessions            Session[]
+  passwordResetTokens PasswordResetToken[]
+  auditLogs           AuditLog[]
+
+  @@index([dealerId])
+  @@index([lockedUntil])
+  @@index([role, active])
+}
+
+model Session {
+  id               String   @id @default(cuid())
+  userId           String
+  refreshTokenHash String
+  userAgent        String?
+  ipAddress        String?
+  expiresAt        DateTime
+  revokedAt        DateTime?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+  @@index([revokedAt])
+}
+
+model PasswordResetToken {
+  id        String   @id @default(cuid())
+  userId    String
+  otpHash   String
+  resetTokenHash String?
+  expiresAt DateTime
+  consumedAt DateTime?
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+  @@index([consumedAt])
+}
+
+model Sku {
+  id         String      @id @default(cuid())
+  code       String      @unique
+  name       String
+  category   String
+  uom        String
+  rate       Decimal     @db.Decimal(12, 2)
+  active     Boolean     @default(true)
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+  orderItems OrderItem[]
+
+  @@index([active, category, code])
+  @@index([name])
+}
+
+model Order {
+  id          String        @id @default(cuid())
+  orderNumber String        @unique
+  idempotencyKey String?    @unique
+  dealerId    String
+  status      OrderStatus   @default(PENDING)
+  totalQty    Int
+  grossAmount Decimal       @db.Decimal(12, 2)
+  discountPct Decimal?      @db.Decimal(5, 2)
+  netAmount   Decimal?      @db.Decimal(12, 2)
+  remarks     String?
+  approvedAt  DateTime?
+  rejectedAt  DateTime?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  dealer      Dealer        @relation(fields: [dealerId], references: [id], onDelete: Restrict)
+  orderItems  OrderItem[]
+  exports     ExportHistory[]
+
+  @@index([dealerId, createdAt])
+  @@index([dealerId, idempotencyKey])
+  @@index([status, createdAt])
+}
+
+model OrderItem {
+  id        String   @id @default(cuid())
+  orderId   String
+  skuId     String
+  qty       Int
+  rate      Decimal  @db.Decimal(12, 2)
+  lineTotal Decimal  @db.Decimal(12, 2)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  order     Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  sku       Sku      @relation(fields: [skuId], references: [id], onDelete: Restrict)
+
+  @@index([orderId])
+  @@index([skuId])
+}
+
+model ExportHistory {
+  id          String       @id @default(cuid())
+  orderId     String       @unique
+  status      ExportStatus @default(PENDING)
+  attemptCount Int         @default(0)
+  fileName    String?
+  csvSha256   String?
+  csvContent  String?
+  processingStartedAt DateTime?
+  generatedAt DateTime?
+  downloadedAt DateTime?
+  lastError   String?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  order       Order        @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([status, createdAt])
+}
+
+model AuditLog {
+  id         String      @id @default(cuid())
+  userId     String?
+  requestId  String?
+  action     AuditAction
+  email      String?
+  dealerCode String?
+  message    String
+  ipAddress  String?
+  userAgent  String?
+  metadata   Json?
+  createdAt  DateTime    @default(now())
+  user       User?       @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([action, createdAt])
+  @@index([requestId, createdAt])
+  @@index([userId, createdAt])
+  @@index([dealerCode, createdAt])
+}
