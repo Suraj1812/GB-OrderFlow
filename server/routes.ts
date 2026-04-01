@@ -6,13 +6,11 @@ import {
   catalogQuerySchema,
   createOrderSchema,
   dealerLoginSchema,
-  forgotPasswordSchema,
   headOfficeLoginSchema,
   healthResponseSchema,
   orderListQuerySchema,
   paginationQuerySchema,
   rejectOrderSchema,
-  resetPasswordSchema,
   upsertDealerSchema,
   upsertSkuSchema,
 } from "../shared/contracts.js";
@@ -145,18 +143,6 @@ export function createRouter() {
     authenticate,
     requireCsrf,
     asyncHandler((request, response) => authController.logoutAllSessions(request, response)),
-  );
-  router.post(
-    "/auth/forgot-password",
-    authRateLimiter,
-    validateRequest({ body: forgotPasswordSchema }),
-    asyncHandler((request, response) => authController.requestPasswordReset(request, response)),
-  );
-  router.post(
-    "/auth/reset-password",
-    authRateLimiter,
-    validateRequest({ body: resetPasswordSchema }),
-    asyncHandler((request, response) => authController.resetPassword(request, response)),
   );
 
   router.get(

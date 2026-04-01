@@ -12,9 +12,7 @@ import toast from "react-hot-toast";
 import type {
   AuthResponse,
   DealerLoginInput,
-  ForgotPasswordInput,
   HeadOfficeLoginInput,
-  ResetPasswordInput,
   SessionUser,
   UserRole,
 } from "../../shared/contracts";
@@ -27,8 +25,6 @@ interface AuthContextValue {
   loginHeadOffice: (input: HeadOfficeLoginInput) => Promise<void>;
   logout: () => Promise<void>;
   logoutAllSessions: () => Promise<void>;
-  requestPasswordReset: (input: ForgotPasswordInput) => Promise<{ message: string; otpPreview?: string; resetTokenPreview?: string }>;
-  resetPassword: (input: ResetPasswordInput) => Promise<void>;
   getDefaultRoute: (role?: UserRole | null) => string;
 }
 
@@ -143,23 +139,6 @@ export function AuthProvider({ children }: PropsWithChildren) {
     }
   }
 
-  async function requestPasswordReset(input: ForgotPasswordInput) {
-    const response = await apiClient.post<{ message: string; otpPreview?: string; resetTokenPreview?: string }>(
-      "/auth/forgot-password",
-      input,
-      {
-        skipAuthRefresh: true,
-      },
-    );
-    return response.data;
-  }
-
-  async function resetPassword(input: ResetPasswordInput) {
-    await apiClient.post("/auth/reset-password", input, {
-      skipAuthRefresh: true,
-    });
-  }
-
   function getDefaultRoute(role?: UserRole | null) {
     return role === "head_office" ? "/head-office/dashboard" : "/dealer/catalog";
   }
@@ -172,8 +151,6 @@ export function AuthProvider({ children }: PropsWithChildren) {
       loginHeadOffice,
       logout,
       logoutAllSessions,
-      requestPasswordReset,
-      resetPassword,
       getDefaultRoute,
     }),
     [bootstrapping, session],

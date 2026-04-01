@@ -312,14 +312,14 @@ export function HeadOfficeDealersPage() {
                 <TextField
                   fullWidth
                   type="password"
-                  label={editingDealer ? "Reset password (optional)" : "Initial password"}
+                  label={editingDealer ? "Admin-set password (optional)" : "Initial password"}
                   {...form.register("password")}
                   error={Boolean(form.formState.errors.password)}
                   helperText={
                     form.formState.errors.password?.message ??
                     (editingDealer
-                      ? "Leave blank to keep the existing password."
-                      : "Set a secure password for the dealer user.")
+                      ? "Leave blank to keep the current password."
+                      : "Admin sets the initial password for the dealer user.")
                   }
                 />
               </Grid>

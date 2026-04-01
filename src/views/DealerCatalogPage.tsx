@@ -1,5 +1,7 @@
 import AddShoppingCartRoundedIcon from "@mui/icons-material/AddShoppingCartRounded";
+import AddRoundedIcon from "@mui/icons-material/AddRounded";
 import LocalShippingRoundedIcon from "@mui/icons-material/LocalShippingRounded";
+import RemoveRoundedIcon from "@mui/icons-material/RemoveRounded";
 import SearchRoundedIcon from "@mui/icons-material/SearchRounded";
 import ShoppingBagRoundedIcon from "@mui/icons-material/ShoppingBagRounded";
 import TaskAltRoundedIcon from "@mui/icons-material/TaskAltRounded";
@@ -12,17 +14,16 @@ import {
   Chip,
   Divider,
   Drawer,
+  IconButton,
   InputAdornment,
+  InputBase,
   Paper,
   Stack,
   TextField,
   Typography,
-  useMediaQuery,
 } from "@mui/material";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { type CSSProperties, memo, startTransition, useEffect, useMemo, useState } from "react";
-import type { ListChildComponentProps } from "react-window";
-import { FixedSizeList } from "react-window";
+import { memo, startTransition, useEffect, useMemo, useState } from "react";
 import toast from "react-hot-toast";
 
 import type {
@@ -48,64 +49,133 @@ const PAGE_SIZE = 48;
 type CartState = Record<string, { sku: DealerCatalogItem; qty: number }>;
 
 interface CatalogRowData {
-  items: DealerCatalogItem[];
+  sku: DealerCatalogItem;
   qtyDrafts: Record<string, string>;
   onQtyChange: (skuId: string, value: string) => void;
+  onQtyStep: (skuId: string, delta: number) => void;
   onAdd: (sku: DealerCatalogItem) => void;
+  cartQty: number;
 }
 
-const CatalogRow = memo(function CatalogRow({
-  index,
-  style,
-  data,
-}: ListChildComponentProps<CatalogRowData>) {
-  const sku = data.items[index];
-  const rowStyle = style as CSSProperties;
+interface QuantityStepperProps {
+  value: string;
+  onChange: (value: string) => void;
+  onDecrement: () => void;
+  onIncrement: () => void;
+  ariaLabel: string;
+}
 
-  if (!sku) {
-    return null;
-  }
+const QuantityStepper = memo(function QuantityStepper({
+  value,
+  onChange,
+  onDecrement,
+  onIncrement,
+  ariaLabel,
+}: QuantityStepperProps) {
+  const hasValue = Number(value || "0") > 0;
 
   return (
-    <Box style={rowStyle}>
-      <Box sx={{ px: 0.5, py: 0.75, height: "100%" }}>
-        <Card sx={{ height: "100%" }}>
-          <CardContent sx={{ p: 2.5, height: "100%" }}>
-            <Stack spacing={2} height="100%">
-              <Stack direction="row" justifyContent="space-between" spacing={1}>
-                <Chip label={sku.code} color="primary" />
-                <Chip label={sku.category} variant="outlined" />
-              </Stack>
-              <Box flexGrow={1}>
-                <Typography variant="h5">{sku.name}</Typography>
-                <Typography mt={0.75} color="text.secondary">
-                  Unit of measure: {sku.uom}
-                </Typography>
-              </Box>
-              <Stack direction={{ xs: "column", sm: "row" }} spacing={1.25}>
-                <TextField
-                  fullWidth
-                  size="small"
-                  label="Qty"
-                  inputMode="numeric"
-                  value={data.qtyDrafts[sku.id] ?? ""}
-                  onChange={(event) =>
-                    data.onQtyChange(sku.id, event.target.value.replace(/[^\d]/g, ""))
-                  }
-                />
-                <Button
-                  variant="contained"
-                  startIcon={<AddShoppingCartRoundedIcon />}
-                  onClick={() => data.onAdd(sku)}
-                >
-                  Add
-                </Button>
-              </Stack>
-            </Stack>
-          </CardContent>
-        </Card>
-      </Box>
-    </Box>
+    <Paper
+      variant="outlined"
+      sx={{
+        display: "flex",
+        alignItems: "center",
+        gap: 0.5,
+        px: 0.75,
+        py: 0.5,
+        borderRadius: 999,
+        minHeight: 54,
+        flexGrow: 1,
+      }}
+    >
+      <IconButton
+        color="secondary"
+        onClick={onDecrement}
+        disabled={!hasValue}
+        aria-label={`Decrease ${ariaLabel}`}
+      >
+        <RemoveRoundedIcon />
+      </IconButton>
+      <InputBase
+        value={value}
+        onChange={(event) => onChange(event.target.value.replace(/[^\d]/g, ""))}
+        inputProps={{
+          inputMode: "numeric",
+          "aria-label": ariaLabel,
+          style: { textAlign: "center", fontWeight: 700 },
+        }}
+        placeholder="0"
+        sx={{
+          flexGrow: 1,
+          fontSize: "1.1rem",
+          minWidth: 56,
+        }}
+      />
+      <IconButton color="secondary" onClick={onIncrement} aria-label={`Increase ${ariaLabel}`}>
+        <AddRoundedIcon />
+      </IconButton>
+    </Paper>
+  );
+});
+
+const CatalogCard = memo(function CatalogCard({
+  sku,
+  qtyDrafts,
+  onQtyChange,
+  onQtyStep,
+  onAdd,
+  cartQty,
+}: CatalogRowData) {
+  return (
+    <Card sx={{ height: "100%" }}>
+      <CardContent sx={{ p: 2.5 }}>
+        <Stack spacing={2}>
+          <Stack direction="row" justifyContent="space-between" spacing={1} useFlexGap flexWrap="wrap">
+            <Chip label={sku.code} color="primary" />
+            <Chip label={sku.category} variant="outlined" />
+          </Stack>
+          <Box>
+            <Typography variant="h5">{sku.name}</Typography>
+            <Typography mt={0.75} color="text.secondary">
+              Unit of measure: {sku.uom}
+            </Typography>
+          </Box>
+          <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+            <Chip
+              size="small"
+              label="+5"
+              variant="outlined"
+              onClick={() => onQtyStep(sku.id, 5)}
+            />
+            <Chip
+              size="small"
+              label="+10"
+              variant="outlined"
+              onClick={() => onQtyStep(sku.id, 10)}
+            />
+            {cartQty > 0 ? (
+              <Chip size="small" color="secondary" label={`In cart ${cartQty}`} />
+            ) : null}
+          </Stack>
+          <Stack direction={{ xs: "column", sm: "row" }} spacing={1.25}>
+            <QuantityStepper
+              value={qtyDrafts[sku.id] ?? ""}
+              onChange={(value) => onQtyChange(sku.id, value)}
+              onDecrement={() => onQtyStep(sku.id, -1)}
+              onIncrement={() => onQtyStep(sku.id, 1)}
+              ariaLabel={`${sku.name} quantity`}
+            />
+            <Button
+              variant="contained"
+              startIcon={<AddShoppingCartRoundedIcon />}
+              onClick={() => onAdd(sku)}
+            >
+              Add
+            </Button>
+          </Stack>
+        </Stack>
+      </CardContent>
+    </Card>
   );
 });
 
@@ -129,7 +199,6 @@ function createSubmissionKey() {
 export function DealerCatalogPage() {
   const queryClient = useQueryClient();
   const { session } = useAuth();
-  const isMobile = useMediaQuery("(max-width:600px)");
   const [searchInput, setSearchInput] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [page, setPage] = useState(1);
@@ -222,12 +291,20 @@ export function DealerCatalogPage() {
     },
   });
 
-  const rowHeight = isMobile ? 176 : 170;
   const renderedItems = catalogQuery.data?.items ?? [];
-  const listHeight = Math.min(renderedItems.length, isMobile ? 3 : 4) * rowHeight || rowHeight;
 
   function updateQtyDraft(skuId: string, value: string) {
     setQtyDrafts((current) => ({ ...current, [skuId]: value }));
+  }
+
+  function stepQtyDraft(skuId: string, delta: number) {
+    setQtyDrafts((current) => {
+      const nextQty = Math.max(0, Number(current[skuId] ?? "0") + delta);
+      return {
+        ...current,
+        [skuId]: nextQty > 0 ? String(nextQty) : "",
+      };
+    });
   }
 
   function handleAddToCart(sku: DealerCatalogItem) {
@@ -274,6 +351,30 @@ export function DealerCatalogPage() {
     });
   }
 
+  function stepCartQty(skuId: string, delta: number) {
+    setCart((current) => {
+      const existing = current[skuId];
+      if (!existing) {
+        return current;
+      }
+
+      const nextQty = existing.qty + delta;
+      if (nextQty <= 0) {
+        const next = { ...current };
+        delete next[skuId];
+        return next;
+      }
+
+      return {
+        ...current,
+        [skuId]: {
+          ...existing,
+          qty: nextQty,
+        },
+      };
+    });
+  }
+
   function handleSubmitOrder() {
     const payload = buildOptimisticPayload(cart);
     const parsed = createOrderSchema.safeParse(payload);
@@ -306,26 +407,32 @@ export function DealerCatalogPage() {
         }
       />
 
-      <Stack direction={{ xs: "column", xl: "row" }} spacing={3}>
+      <Box
+        sx={{
+          display: "grid",
+          gap: 2,
+          gridTemplateColumns: {
+            xs: "1fr",
+            md: "repeat(3, minmax(0, 1fr))",
+          },
+        }}
+      >
         <MetricCard
           label="Visible SKUs"
           value={`${catalogQuery.data?.pagination.totalItems ?? 0}`}
-          helper="Server-side filtered catalogue"
           icon={LocalShippingRoundedIcon}
         />
         <MetricCard
           label="Pending Orders"
           value={`${pendingOrders}`}
-          helper="Recent submissions awaiting action"
           icon={TaskAltRoundedIcon}
         />
         <MetricCard
           label="Approved Recently"
           value={`${approvedOrders}`}
-          helper="Approved orders from the latest queue slice"
           icon={ShoppingBagRoundedIcon}
         />
-      </Stack>
+      </Box>
 
       <Paper sx={{ p: 2.5 }}>
         <Stack spacing={2}>
@@ -382,22 +489,29 @@ export function DealerCatalogPage() {
         />
       ) : (
         <>
-          <Paper sx={{ p: 1 }}>
-            <FixedSizeList
-              height={listHeight}
-              itemCount={renderedItems.length}
-              itemSize={rowHeight}
-              overscanCount={4}
-              width="100%"
-              itemData={{
-                items: renderedItems,
-                qtyDrafts,
-                onQtyChange: updateQtyDraft,
-                onAdd: handleAddToCart,
+          <Paper sx={{ p: 2 }}>
+            <Box
+              sx={{
+                display: "grid",
+                gap: 2,
+                gridTemplateColumns: {
+                  xs: "1fr",
+                  xl: "repeat(2, minmax(0, 1fr))",
+                },
               }}
             >
-              {CatalogRow}
-            </FixedSizeList>
+              {renderedItems.map((sku) => (
+                <CatalogCard
+                  key={sku.id}
+                  sku={sku}
+                  qtyDrafts={qtyDrafts}
+                  onQtyChange={updateQtyDraft}
+                  onQtyStep={stepQtyDraft}
+                  onAdd={handleAddToCart}
+                  cartQty={cart[sku.id]?.qty ?? 0}
+                />
+              ))}
+            </Box>
           </Paper>
           <PaginationBar
             page={catalogQuery.data.pagination.page}
@@ -450,17 +564,12 @@ export function DealerCatalogPage() {
                         {entry.sku.code} · {entry.sku.uom}
                       </Typography>
                     </Box>
-                    <TextField
-                      label="Qty"
-                      size="small"
-                      inputMode="numeric"
+                    <QuantityStepper
                       value={String(entry.qty)}
-                      onChange={(event) =>
-                        updateCartQty(
-                          entry.sku.id,
-                          event.target.value.replace(/[^\d]/g, ""),
-                        )
-                      }
+                      onChange={(value) => updateCartQty(entry.sku.id, value)}
+                      onDecrement={() => stepCartQty(entry.sku.id, -1)}
+                      onIncrement={() => stepCartQty(entry.sku.id, 1)}
+                      ariaLabel={`${entry.sku.name} cart quantity`}
                     />
                   </Stack>
                 </Paper>

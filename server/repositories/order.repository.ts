@@ -92,8 +92,10 @@ export class OrderRepository {
   }
 
   public async acquireOrderSequenceLock(tx: Tx = this.db) {
-    if ("$queryRaw" in tx) {
-      await tx.$queryRaw`SELECT pg_advisory_xact_lock(97412026)`;
+    if ("$executeRaw" in tx) {
+      // This statement only acquires a transaction-scoped advisory lock and does not
+      // return row data, so executeRaw avoids Prisma trying to deserialize a void column.
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(97412026)`;
     }
   }
 

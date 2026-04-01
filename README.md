@@ -2,6 +2,10 @@
 
 Enterprise-grade dealer ordering and Head Office approval workflow for Goel Brothers.
 
+## System Design Document
+
+For the full business, UX, architecture, API, ERP, and delivery proposal, see [docs/README.md](./docs/README.md).
+
 ## Stack
 
 - React 18 + TypeScript + Vite
@@ -21,7 +25,7 @@ Enterprise-grade dealer ordering and Head Office approval workflow for Goel Brot
 - Role-based access control for Dealer and Head Office flows
 - Session tracking in PostgreSQL, logout-all-sessions support, and refresh-token rotation
 - Login brute-force protection, temporary account lockout, audit logs, and bcrypt password hashing
-- Password reset via OTP or secure reset token with server-side invalidation
+- Admin-managed password provisioning and credential lifecycle
 - Modular backend with controllers, services, repositories, centralized errors, and request validation
 - PostgreSQL schema for dealers, users, sessions, SKUs, orders, order items, exports, and audit logs
 - Deterministic ERP-safe CSV generation with export history and signed download URLs
@@ -108,8 +112,7 @@ Dealers:
 ## Auth notes
 
 - `POST /api/v1/auth/logout-all` revokes every active session for the signed-in user.
-- `POST /api/v1/auth/forgot-password` prepares both an OTP and a secure reset token.
-- `POST /api/v1/auth/reset-password` accepts either the OTP or the secure reset token.
+- Password changes are managed by admin users from the controlled back-office workflow.
 - Repeated failed login attempts trigger a temporary account lock based on `.env` settings.
 
 ## Deployment

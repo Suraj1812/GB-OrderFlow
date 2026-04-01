@@ -12,7 +12,6 @@ import {
   Typography,
 } from "@mui/material";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useState } from "react";
 import { useForm } from "react-hook-form";
 import toast from "react-hot-toast";
 import { Link as RouterLink, Navigate, useNavigate } from "react-router-dom";
@@ -21,12 +20,10 @@ import type { HeadOfficeLoginInput } from "../../shared/contracts";
 import { headOfficeLoginSchema } from "../../shared/contracts";
 import { getApiErrorMessage } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
-import { PasswordResetDialog } from "../ui/PasswordResetDialog";
 
 export function HeadOfficeLoginPage() {
   const navigate = useNavigate();
   const { session, loginHeadOffice, getDefaultRoute } = useAuth();
-  const [resetOpen, setResetOpen] = useState(false);
   const form = useForm<HeadOfficeLoginInput>({
     resolver: zodResolver(headOfficeLoginSchema),
     defaultValues: {
@@ -105,9 +102,9 @@ export function HeadOfficeLoginPage() {
                 >
                   Enter Head Office portal
                 </Button>
-                <Button variant="text" color="inherit" onClick={() => setResetOpen(true)}>
-                  Forgot password?
-                </Button>
+                <Typography color="text.secondary" variant="body2">
+                  Password access is managed by system admin. Contact the admin team if credentials need to be changed.
+                </Typography>
                 <Typography color="text.secondary" variant="body2">
                   Looking for dealer access?{" "}
                   <Link component={RouterLink} to="/login/dealer">
@@ -119,12 +116,6 @@ export function HeadOfficeLoginPage() {
           </Card>
         </Stack>
       </Container>
-
-      <PasswordResetDialog
-        open={resetOpen}
-        onClose={() => setResetOpen(false)}
-        defaultIdentifier={form.watch("username")}
-      />
     </Box>
   );
 }

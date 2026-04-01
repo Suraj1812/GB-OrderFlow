@@ -12,7 +12,7 @@ import type { ElementType } from "react";
 interface MetricCardProps {
   label: string;
   value: string;
-  helper: string;
+  helper?: string;
   icon?: ElementType;
 }
 
@@ -31,9 +31,11 @@ export function MetricCard({
             <Typography mt={1} variant="h4">
               {value}
             </Typography>
-            <Typography mt={1.25} color="text.secondary">
-              {helper}
-            </Typography>
+            {helper ? (
+              <Typography mt={1.25} color="text.secondary">
+                {helper}
+              </Typography>
+            ) : null}
           </Box>
           <Box
             sx={{
